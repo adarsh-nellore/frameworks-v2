@@ -112,6 +112,20 @@ function CanvasPageInner() {
     return () => window.removeEventListener("resize", onResize);
   }, [fitAll]);
 
+  // Keyboard: Escape deactivates the current board (Miro/Figma parity —
+  // "click off" without actually clicking). Ignored when a text input is
+  // focused so we don't eat Escape in titles or copilot.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== "Escape") return;
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      if (activeBoardId) setActiveBoardId(null);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [activeBoardId, setActiveBoardId]);
+
   // Apply stored theme/DS globally to the canvas root rather than per-board,
   // so every board on the workspace shares one visual language.
   useLayoutEffect(() => {
