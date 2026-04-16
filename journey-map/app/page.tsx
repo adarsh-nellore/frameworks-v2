@@ -136,8 +136,15 @@ export default function LandingPage() {
     if (!canSubmit) return;
     setLocalError(null);
 
-    const hasSources = files.length > 0 || urls.length > 0;
-    const hasText = text.trim().length > 0;
+    // Users often paste URLs inline in the prompt ("affinity diagram of
+    // https://nytimes.com") instead of using the 🔗 button. Extract any URLs
+    // found in the prompt and merge them with any explicitly-added URLs, then
+    // strip them from the text so the agent gets a clean description.
+    const { cleanText, extractedUrls } = splitInlineUrls(text);
+    const effectiveUrls = dedupeUrls([...urls, ...extractedUrls]);
+    const effectiveText = cleanText.trim() || text.trim();
+    const hasSources = files.length > 0 || effectiveUrls.length > 0;
+    const hasText = effectiveText.length > 0;
 
     if (!selectedId) {
       if (!hasText) return;
@@ -147,15 +154,15 @@ export default function LandingPage() {
       // via Jina Reader and passes all source text into the synthesis prompt.
       const board = addBoard({
         frameworkId: "journey-map", // placeholder — canvas ignores it while pending
-        title: (title || text.slice(0, 60)).trim() || "New framework",
+        title: (title || effectiveText.slice(0, 60)).trim() || "New framework",
         map: EMPTY_MAP,
         status: "pending-describe",
-        pendingPrompt: text,
+        pendingPrompt: effectiveText,
         makeActive: true,
       });
-      void startDescribe(board.id, text, existingIds, {
+      void startDescribe(board.id, effectiveText, existingIds, {
         files: hasSources ? files : undefined,
-        urls: hasSources ? urls : undefined,
+        urls: effectiveUrls.length > 0 ? effectiveUrls : undefined,
       });
       router.push(`/canvas?b=${board.id}`);
       return;
@@ -170,19 +177,36 @@ export default function LandingPage() {
       title: title || fw.seed.title || fw.label,
       map: fw.seed,
       status: "pending-generate",
-      pendingPrompt: text,
+      pendingPrompt: effectiveText,
       makeActive: true,
     });
     void startGenerate(board.id, {
       frameworkId: fw.id,
-      text: hasText ? text : undefined,
+      text: hasText ? effectiveText : undefined,
       files,
-      urls,
+      urls: effectiveUrls,
       title: title || undefined,
       persona: persona || undefined,
       fidelityMode,
     });
     router.push(`/canvas?b=${board.id}`);
+  }
+
+  // Pull bare URLs out of the prompt text. "Affinity diagram of https://nytimes.com
+  // news" → { cleanText: "Affinity diagram of news", extractedUrls: ["https://..."] }
+  function splitInlineUrls(s: string): { cleanText: string; extractedUrls: string[] } {
+    const urlRegex = /(https?:\/\/[^\s)]+)/gi;
+    const found: string[] = [];
+    const cleaned = s.replace(urlRegex, (m) => {
+      const trimmed = m.replace(/[.,;:]+$/, "");
+      found.push(trimmed);
+      return "";
+    });
+    return { cleanText: cleaned.replace(/\s+/g, " ").trim(), extractedUrls: found };
+  }
+
+  function dedupeUrls(xs: string[]): string[] {
+    return Array.from(new Set(xs.filter((x) => /^https?:\/\//i.test(x))));
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
