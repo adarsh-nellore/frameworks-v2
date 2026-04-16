@@ -216,8 +216,11 @@ export default function LandingPage() {
             {progressEvent && progressEvent.phase !== "result" && progressEvent.phase !== "error" && (
               <div className="rounded-xl bg-white/80 border border-border-soft px-4 py-3 text-[13px] text-ink-secondary">
                 {progressEvent.phase === "ingesting" && "Reading source material…"}
+                {progressEvent.phase === "subject_id" && "Identifying the subject…"}
                 {progressEvent.phase === "extracting" && "Extracting key details…"}
-                {progressEvent.phase === "structuring" && "Structuring into a framework…"}
+                {progressEvent.phase === "synthesizing" && "Structuring into a framework…"}
+                {progressEvent.phase === "critiquing" && "Critiquing output quality…"}
+                {progressEvent.phase === "revising" && "Revising based on critique…"}
               </div>
             )}
           </main>
