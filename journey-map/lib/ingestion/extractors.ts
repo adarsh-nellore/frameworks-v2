@@ -17,7 +17,9 @@ export function extensionOf(name: string): string {
   return m ? m[1] : "";
 }
 
-export const SUPPORTED_EXTENSIONS = ["pdf", "docx", "txt", "md", "json"] as const;
+export const SUPPORTED_EXTENSIONS = [
+  "pdf", "docx", "txt", "md", "json", "css", "html", "htm",
+] as const;
 
 export async function extractPdf(file: File): Promise<IngestedSource> {
   const buf = Buffer.from(await file.arrayBuffer());
@@ -73,6 +75,60 @@ export async function extractJson(file: File): Promise<IngestedSource> {
     name: file.name,
     text: pretty,
     estTokens: estTextTokens(pretty),
+  };
+}
+
+export async function extractCss(file: File): Promise<IngestedSource> {
+  const text = await file.text();
+  return {
+    kind: "text",
+    name: file.name,
+    text,
+    estTokens: estTextTokens(text),
+  };
+}
+
+/**
+ * Extract design-relevant content from an HTML file: `<style>` blocks,
+ * inline `style=""` attributes, and `<link>` stylesheet references.
+ * The rest of the markup (divs, headings, paragraphs) is dropped to keep
+ * the payload small — a 474 KB showcase page typically collapses to ~10 KB.
+ */
+export async function extractHtml(file: File): Promise<IngestedSource> {
+  const raw = await file.text();
+  const styleBlocks: string[] = [];
+  const styleRegex = /<style[^>]*>([\s\S]*?)<\/style>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = styleRegex.exec(raw))) styleBlocks.push(m[1]);
+
+  const inlineStyles: string[] = [];
+  const inlineRegex = /style=("[^"]*"|'[^']*')/gi;
+  while ((m = inlineRegex.exec(raw))) inlineStyles.push(m[1].slice(1, -1));
+
+  const externalSheets: string[] = [];
+  const linkRegex =
+    /<link[^>]*rel=["']stylesheet["'][^>]*href=["']([^"']+)["']/gi;
+  while ((m = linkRegex.exec(raw))) {
+    externalSheets.push(`/* external sheet: ${m[1]} */`);
+  }
+
+  const text = [
+    ...externalSheets,
+    ...styleBlocks.map((b) => `/* <style> block */\n${b.trim()}`),
+    inlineStyles.length
+      ? `/* inline styles */\n${inlineStyles.join("\n")}`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
+  // Fallback: if no CSS was found, pass the raw HTML (capped to 30 KB).
+  const final = text.trim() || raw.slice(0, 30_000);
+  return {
+    kind: "text",
+    name: file.name,
+    text: final,
+    estTokens: estTextTokens(final),
   };
 }
 
@@ -132,6 +188,11 @@ export async function extractFile(file: File): Promise<IngestedSource> {
       return extractText(file);
     case "json":
       return extractJson(file);
+    case "css":
+      return extractCss(file);
+    case "html":
+    case "htm":
+      return extractHtml(file);
     default:
       throw new IngestionError(
         `Unsupported file type ".${ext}". Allowed: ${SUPPORTED_EXTENSIONS.map((e) => "." + e).join(", ")}`

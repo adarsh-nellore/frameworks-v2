@@ -1,33 +1,38 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Editor from "react-simple-code-editor";
 import Prism from "prismjs";
 import "prismjs/components/prism-json";
 import "prismjs/themes/prism.min.css";
-import { Download, Loader2, Palette, RotateCcw, Upload } from "lucide-react";
-import type { JourneyMap } from "@/lib/frameworks/journey-map/types";
-import type { ThemeV1 } from "@/lib/theme";
+import { Download, Palette, RotateCcw } from "lucide-react";
+import type { BrandInput, ThemeV1 } from "@/lib/theme";
 import {
   applyDesignTokenCssVars,
   applyTheme,
-  buildHandoffJson,
   clearAppliedTheme,
   clearStoredTheme,
   DEFAULT_THEME_V1,
+  deriveTheme,
   loadStoredThemeJson,
   parseThemeImport,
-  type ParseResult,
   saveStoredDesignTokenCssVarsJson,
   saveStoredThemeJson,
   serializeTheme,
 } from "@/lib/theme";
+import { triggerDownload } from "@/lib/export";
+import { ThemeUploadPanel } from "@/components/ThemeUploadPanel";
+import { ThemePreviewCard } from "@/components/ThemePreviewCard";
 
-type Props = {
-  map: JourneyMap;
+
+type Stage = "brand" | "upload" | "advanced";
+
+// Defaults for the brand pickers.
+const DEFAULT_BRAND: BrandInput = {
+  primary: "#3b5998",
+  secondary: "#fafafa",
+  accent: "#5b9bd5",
 };
-
-type OkParse = Extract<ParseResult, { ok: true }>;
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/\u00a0/g, " ");
@@ -42,106 +47,139 @@ function highlightJson(code: string): string {
   }
 }
 
-function applyParsedTheme(parsed: OkParse): void {
-  applyTheme(parsed.theme);
-  applyDesignTokenCssVars(parsed.designTokenCssVars);
-  saveStoredThemeJson(serializeTheme(parsed.theme));
-  saveStoredDesignTokenCssVarsJson(
-    parsed.designTokenCssVars ? JSON.stringify(parsed.designTokenCssVars) : null
+function ColorInput({
+  label,
+  value,
+  onChange,
+  disabled,
+}: {
+  label: string;
+  value: string;
+  onChange: (hex: string) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="flex items-center gap-2.5">
+      <label className="relative shrink-0 cursor-pointer">
+        <span
+          className="block h-9 w-9 rounded-lg border border-border-medium shadow-sm"
+          style={{ backgroundColor: value }}
+        />
+        <input
+          type="color"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          disabled={disabled}
+          className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+        />
+      </label>
+      <div className="flex-1 min-w-0">
+        <div className="text-[10px] font-mono uppercase tracking-[0.18em] text-ink-muted mb-0.5">
+          {label}
+        </div>
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => {
+            const v = e.target.value.trim();
+            if (/^#[0-9a-fA-F]{6}$/.test(v)) onChange(v);
+          }}
+          disabled={disabled}
+          className="w-full rounded-md bg-white/60 border border-border-soft hover:border-border-medium focus:border-ink-primary focus:bg-white px-2 py-1 text-[12px] font-mono text-ink-primary outline-none transition-colors"
+          placeholder="#000000"
+          maxLength={7}
+        />
+      </div>
+    </div>
   );
 }
 
-async function normalizeThemeWithAi(rawText: string): Promise<OkParse> {
-  const res = await fetch("/api/theme-normalize", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ rawText }),
-  });
-  const data = (await res.json()) as { error?: string; theme?: ThemeV1 };
-  if (!res.ok) {
-    throw new Error(data.error || `Request failed (${res.status})`);
-  }
-  if (!data.theme) {
-    throw new Error("Response missing theme");
-  }
-  return { ok: true, theme: data.theme };
-}
-
-export function ThemeMenu({ map }: Props) {
-  const inputRef = useRef<HTMLInputElement | null>(null);
+export function ThemeMenu() {
   const [open, setOpen] = useState(false);
+  const [stage, setStage] = useState<Stage>("brand");
+  const [uploadBusy, setUploadBusy] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  // Brand color picker state.
+  const [primary, setPrimary] = useState(DEFAULT_BRAND.primary);
+  const [secondary, setSecondary] = useState(DEFAULT_BRAND.secondary);
+  const [accent, setAccent] = useState(DEFAULT_BRAND.accent);
+  const [sansFont, setSansFont] = useState("");
+  const [monoFont, setMonoFont] = useState("");
+
+  // Advanced paste-JSON state.
   const [draft, setDraft] = useState("");
   const [pasteError, setPasteError] = useState<string | null>(null);
-  const [aiBusy, setAiBusy] = useState(false);
 
+  // Live-derived theme (updates instantly as user changes pickers).
+  const brand: BrandInput = useMemo(
+    () => ({
+      primary,
+      secondary,
+      accent,
+      ...(sansFont ? { sansFont } : {}),
+      ...(monoFont ? { monoFont } : {}),
+    }),
+    [primary, secondary, accent, sansFont, monoFont]
+  );
+  const derivedTheme = useMemo(() => deriveTheme(brand), [brand]);
+
+  // Reset state when dialog opens.
   useEffect(() => {
     if (!open) return;
+    setStage("brand");
+    setUploadBusy(false);
+    setUploadError(null);
+    setPrimary(DEFAULT_BRAND.primary);
+    setSecondary(DEFAULT_BRAND.secondary);
+    setAccent(DEFAULT_BRAND.accent);
+    setSansFont("");
+    setMonoFont("");
     const raw = loadStoredThemeJson();
     setDraft(raw ?? serializeTheme(DEFAULT_THEME_V1));
     setPasteError(null);
-    setAiBusy(false);
   }, [open]);
 
-  const onImportFile = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
-    setPasteError(null);
-    try {
-      const text = await file.text();
-      let parsed: ParseResult;
-      try {
-        parsed = parseThemeImport(JSON.parse(text) as unknown);
-      } catch {
-        window.alert("Invalid JSON file.");
-        return;
-      }
-      if (!parsed.ok) {
-        setAiBusy(true);
-        try {
-          const ok = await normalizeThemeWithAi(text);
-          applyParsedTheme(ok);
-          setDraft(serializeTheme(ok.theme));
-          setOpen(false);
-        } catch (err) {
-          window.alert(
-            `${parsed.error}\n\nAI conversion failed: ${err instanceof Error ? err.message : String(err)}`
-          );
-        } finally {
-          setAiBusy(false);
-        }
-        return;
-      }
-      applyParsedTheme(parsed);
-      setDraft(serializeTheme(parsed.theme));
-      setOpen(false);
-    } catch {
-      window.alert("Could not read file.");
-    }
-  }, []);
+  // Apply the derived brand theme.
+  const onApplyBrand = useCallback(() => {
+    applyTheme(derivedTheme);
+    applyDesignTokenCssVars(undefined);
+    saveStoredThemeJson(serializeTheme(derivedTheme));
+    saveStoredDesignTokenCssVarsJson(null);
+    setOpen(false);
+  }, [derivedTheme]);
 
-  const onApplyPaste = useCallback(async () => {
+  // Upload → AI extracts brand → populate pickers.
+  const onNormalized = useCallback(
+    (theme: ThemeV1, notes: string, brandResult?: BrandInput) => {
+      if (brandResult) {
+        setPrimary(brandResult.primary);
+        setSecondary(brandResult.secondary);
+        setAccent(brandResult.accent);
+        if (brandResult.sansFont) setSansFont(brandResult.sansFont);
+        if (brandResult.monoFont) setMonoFont(brandResult.monoFont);
+      }
+      setStage("brand"); // Switch to Brand tab so user sees populated pickers + preview
+    },
+    []
+  );
+
+  // Advanced paste: parse locally, apply immediately.
+  const onApplyPaste = useCallback(() => {
     setPasteError(null);
     try {
       const json = JSON.parse(draft) as unknown;
-      let parsed = parseThemeImport(json);
+      const parsed = parseThemeImport(json);
       if (!parsed.ok) {
-        const parseErr = parsed.error;
-        setAiBusy(true);
-        try {
-          const ok = await normalizeThemeWithAi(draft);
-          parsed = ok;
-        } catch (err) {
-          setPasteError(
-            `${parseErr} — AI conversion failed: ${err instanceof Error ? err.message : String(err)}`
-          );
-          return;
-        } finally {
-          setAiBusy(false);
-        }
+        setPasteError(parsed.error);
+        return;
       }
-      applyParsedTheme(parsed);
-      setDraft(serializeTheme(parsed.theme));
+      applyTheme(parsed.theme);
+      applyDesignTokenCssVars(parsed.designTokenCssVars);
+      saveStoredThemeJson(serializeTheme(parsed.theme));
+      saveStoredDesignTokenCssVarsJson(
+        parsed.designTokenCssVars ? JSON.stringify(parsed.designTokenCssVars) : null
+      );
       setOpen(false);
     } catch {
       setPasteError("Invalid JSON syntax.");
@@ -155,49 +193,20 @@ export function ThemeMenu({ map }: Props) {
     setOpen(false);
   }, []);
 
-  const onExportHandoff = useCallback(() => {
-    const raw = loadStoredThemeJson();
-    let theme = null;
-    if (raw) {
-      try {
-        const p = parseThemeImport(JSON.parse(raw) as unknown);
-        if (p.ok) theme = p.theme;
-      } catch {
-        /* ignore */
-      }
-    }
-    const blob = new Blob([buildHandoffJson(map, theme)], {
-      type: "application/json;charset=utf-8",
-    });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = "journey-map-handoff.json";
-    a.click();
-    URL.revokeObjectURL(a.href);
-    setOpen(false);
-  }, [map]);
-
   const onExportThemeOnly = useCallback(() => {
-    const blob = new Blob([serializeTheme(DEFAULT_THEME_V1)], {
-      type: "application/json;charset=utf-8",
-    });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = "journey-map-theme-default.v1.json";
-    a.click();
-    URL.revokeObjectURL(a.href);
+    triggerDownload(
+      new Blob([serializeTheme(DEFAULT_THEME_V1)], {
+        type: "application/json;charset=utf-8",
+      }),
+      "journey-map-theme-default.v1.json"
+    );
     setOpen(false);
   }, []);
 
+  const busy = uploadBusy;
+
   return (
     <div className="relative shrink-0">
-      <input
-        ref={inputRef}
-        type="file"
-        accept="application/json,.json"
-        className="hidden"
-        onChange={onImportFile}
-      />
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
@@ -225,18 +234,18 @@ export function ThemeMenu({ map }: Props) {
             role="dialog"
             aria-label="Theme"
           >
+            {/* Header */}
             <div className="shrink-0 border-b border-border-soft px-4 py-3 flex items-center justify-between gap-2">
               <div>
                 <p className="font-mono text-[9px] tracking-[0.2em] uppercase text-ink-muted">
-                  Design tokens
+                  Branding
                 </p>
                 <p className="text-[13px] font-medium text-ink-primary">
-                  Paste or import theme JSON
-                </p>
-                <p className="text-[11px] text-ink-muted mt-0.5 max-w-[22rem] leading-snug">
-                  Accepts journey-map <span className="font-mono">theme.v1</span> (RGB triplets) or grouped{" "}
-                  <span className="font-mono">tokens</span>. If the shape does not match, we call the API to
-                  convert it (needs <span className="font-mono">ANTHROPIC_API_KEY</span>).
+                  {stage === "brand"
+                    ? "Brand colors & fonts"
+                    : stage === "upload"
+                      ? "Upload design system"
+                      : "Paste theme JSON"}
                 </p>
               </div>
               <button
@@ -248,98 +257,169 @@ export function ThemeMenu({ map }: Props) {
               </button>
             </div>
 
-            <div className="flex-1 min-h-0 flex flex-col px-4 py-3 gap-3 overflow-y-auto">
-              <div className="rounded-xl border border-border-soft max-h-[min(42vh,26rem)] min-h-[220px] overflow-y-auto overflow-x-auto bg-[rgb(var(--surface-subtle)/1)] overscroll-contain [scrollbar-gutter:stable]">
-                <Editor
-                  value={draft}
-                  onValueChange={setDraft}
-                  highlight={highlightJson}
-                  padding={12}
-                  tabSize={2}
-                  insertSpaces
-                  className="font-mono text-[12px] leading-relaxed min-h-[220px] text-ink-primary"
-                  textareaClassName="outline-none bg-transparent min-h-[220px]"
-                  style={{
-                    fontFamily:
-                      "var(--jm-font-mono, var(--font-mono)), ui-monospace, monospace",
-                  }}
-                />
-              </div>
-              {pasteError ? (
-                <p className="text-[12px] text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2">
-                  {pasteError}
-                </p>
-              ) : null}
-              {aiBusy ? (
-                <p className="text-[12px] text-ink-secondary flex items-center gap-2">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
-                  Converting with AI…
-                </p>
-              ) : null}
-              <div className="flex flex-wrap gap-2">
+            {/* Tab strip */}
+            <div className="flex items-center px-4 pt-2.5 pb-0 gap-1">
+              {(
+                [
+                  ["brand", "Brand"],
+                  ["upload", "Upload"],
+                  ["advanced", "JSON"],
+                ] as [Stage, string][]
+              ).map(([tab, label]) => (
                 <button
+                  key={tab}
                   type="button"
-                  onClick={() => void onApplyPaste()}
-                  disabled={aiBusy}
-                  className="px-3 py-1.5 rounded-lg bg-ink-primary text-white text-[12px] font-medium hover:opacity-90 disabled:opacity-50 inline-flex items-center gap-2"
+                  disabled={busy}
+                  onClick={() => setStage(tab)}
+                  className={[
+                    "px-2.5 py-1 rounded-md transition-colors",
+                    "text-[10px] font-mono uppercase tracking-[0.18em]",
+                    stage === tab
+                      ? "text-ink-primary bg-ink-primary/[0.07]"
+                      : "text-ink-muted hover:text-ink-secondary",
+                    busy ? "opacity-50 cursor-not-allowed" : "",
+                  ].join(" ")}
                 >
-                  {aiBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-                  Apply theme
+                  {label}
                 </button>
-                <button
-                  type="button"
-                  disabled={aiBusy}
-                  onClick={() => {
-                    setDraft(serializeTheme(DEFAULT_THEME_V1));
-                    setPasteError(null);
-                  }}
-                  className="px-3 py-1.5 rounded-lg border border-border-soft text-[12px] text-ink-secondary hover:bg-surface-hover disabled:opacity-50"
-                >
-                  Load default template
-                </button>
-                <button
-                  type="button"
-                  disabled={aiBusy}
-                  onClick={() => inputRef.current?.click()}
-                  className="px-3 py-1.5 rounded-lg border border-border-soft text-[12px] text-ink-secondary hover:bg-surface-hover inline-flex items-center gap-1.5 disabled:opacity-50"
-                >
-                  <Upload className="h-3.5 w-3.5" />
-                  Import file…
-                </button>
-              </div>
+              ))}
+            </div>
 
-              <div className="h-px bg-border-soft" />
+            {/* Body */}
+            <div className="flex-1 min-h-0 flex flex-col overflow-y-auto">
+              {/* BRAND tab */}
+              {stage === "brand" && (
+                <div className="px-4 py-3 flex flex-col gap-4">
+                  {/* Color pickers */}
+                  <div className="grid grid-cols-3 gap-3">
+                    <ColorInput label="Primary" value={primary} onChange={setPrimary} />
+                    <ColorInput label="Secondary" value={secondary} onChange={setSecondary} />
+                    <ColorInput label="Accent" value={accent} onChange={setAccent} />
+                  </div>
 
-              <div className="flex flex-wrap gap-2 text-[12px]">
-                <button
-                  type="button"
-                  disabled={aiBusy}
-                  onClick={onExportThemeOnly}
-                  className="inline-flex items-center gap-1.5 text-ink-secondary hover:text-ink-primary disabled:opacity-50"
-                >
-                  <Download className="h-3.5 w-3.5" />
-                  Download default JSON
-                </button>
-                <span className="text-ink-muted/50">·</span>
-                <button
-                  type="button"
-                  disabled={aiBusy}
-                  onClick={onExportHandoff}
-                  className="inline-flex items-center gap-1.5 text-ink-secondary hover:text-ink-primary disabled:opacity-50"
-                >
-                  <Download className="h-3.5 w-3.5" />
-                  Export handoff
-                </button>
-                <span className="text-ink-muted/50">·</span>
-                <button
-                  type="button"
-                  disabled={aiBusy}
-                  onClick={onReset}
-                  className="inline-flex items-center gap-1.5 text-rose-700 hover:text-rose-900 disabled:opacity-50"
-                >
-                  <RotateCcw className="h-3.5 w-3.5" />
-                  Reset theme
-                </button>
+                  {/* Font inputs */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <div className="text-[10px] font-mono uppercase tracking-[0.18em] text-ink-muted mb-1">
+                        Sans font
+                      </div>
+                      <input
+                        type="text"
+                        value={sansFont}
+                        onChange={(e) => setSansFont(e.target.value)}
+                        placeholder="e.g. DM Sans"
+                        className="w-full rounded-md bg-white/60 border border-border-soft hover:border-border-medium focus:border-ink-primary focus:bg-white px-2 py-1.5 text-[12px] text-ink-primary placeholder:text-ink-muted outline-none transition-colors"
+                      />
+                    </div>
+                    <div>
+                      <div className="text-[10px] font-mono uppercase tracking-[0.18em] text-ink-muted mb-1">
+                        Mono font
+                      </div>
+                      <input
+                        type="text"
+                        value={monoFont}
+                        onChange={(e) => setMonoFont(e.target.value)}
+                        placeholder="e.g. JetBrains Mono"
+                        className="w-full rounded-md bg-white/60 border border-border-soft hover:border-border-medium focus:border-ink-primary focus:bg-white px-2 py-1.5 text-[12px] text-ink-primary placeholder:text-ink-muted outline-none transition-colors"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Live preview */}
+                  <ThemePreviewCard
+                    theme={derivedTheme}
+                    notes=""
+                    onApply={onApplyBrand}
+                    onCancel={() => setOpen(false)}
+                  />
+                </div>
+              )}
+
+              {/* UPLOAD tab */}
+              {stage === "upload" && (
+                <div className="px-4 py-3">
+                  <p className="text-[11px] text-ink-muted leading-snug mb-3">
+                    Drop a design system file — AI extracts 3 brand colors + fonts, then populates the Brand tab.
+                  </p>
+                  <ThemeUploadPanel
+                    onNormalized={onNormalized}
+                    onError={setUploadError}
+                    busy={uploadBusy}
+                    onBusyChange={setUploadBusy}
+                  />
+                  {uploadError && (
+                    <p className="mt-2 text-[12px] text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2">
+                      {uploadError}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* ADVANCED (paste JSON) tab */}
+              {stage === "advanced" && (
+                <div className="px-4 py-3 flex flex-col gap-3">
+                  <p className="text-[11px] text-ink-muted leading-snug">
+                    Paste a <span className="font-mono">theme.v1</span> or grouped <span className="font-mono">tokens</span> JSON. Parsed locally — no AI.
+                  </p>
+                  <div className="rounded-xl border border-border-soft max-h-[min(42vh,26rem)] min-h-[220px] overflow-y-auto overflow-x-auto bg-[rgb(var(--surface-subtle)/1)] overscroll-contain [scrollbar-gutter:stable]">
+                    <Editor
+                      value={draft}
+                      onValueChange={setDraft}
+                      highlight={highlightJson}
+                      padding={12}
+                      tabSize={2}
+                      insertSpaces
+                      className="font-mono text-[12px] leading-relaxed min-h-[220px] text-ink-primary"
+                      textareaClassName="outline-none bg-transparent min-h-[220px]"
+                      style={{ fontFamily: "var(--jm-font-mono, var(--font-mono)), ui-monospace, monospace" }}
+                    />
+                  </div>
+                  {pasteError && (
+                    <p className="text-[12px] text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2">
+                      {pasteError}
+                    </p>
+                  )}
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={onApplyPaste}
+                      className="px-3 py-1.5 rounded-lg bg-ink-primary text-white text-[12px] font-medium hover:opacity-90"
+                    >
+                      Apply theme
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setDraft(serializeTheme(DEFAULT_THEME_V1)); setPasteError(null); }}
+                      className="px-3 py-1.5 rounded-lg border border-border-soft text-[12px] text-ink-secondary hover:bg-surface-hover"
+                    >
+                      Load default
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Bottom actions */}
+              <div className="px-4 pb-3 pt-1">
+                <div className="h-px bg-border-soft mb-3" />
+                <div className="flex flex-wrap gap-2 text-[12px]">
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={onExportThemeOnly}
+                    className="inline-flex items-center gap-1.5 text-ink-secondary hover:text-ink-primary disabled:opacity-50"
+                  >
+                    <Download className="h-3.5 w-3.5" /> Download default theme
+                  </button>
+                  <span className="text-ink-muted/50">&middot;</span>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={onReset}
+                    className="inline-flex items-center gap-1.5 text-rose-700 hover:text-rose-900 disabled:opacity-50"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" /> Reset theme
+                  </button>
+                </div>
               </div>
             </div>
           </div>

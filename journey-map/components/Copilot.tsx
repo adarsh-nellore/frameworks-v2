@@ -13,7 +13,6 @@ import type {
 } from "@/lib/frameworks/journey-map/types";
 import type { Op } from "@/lib/frameworks/journey-map/ops";
 import { applyOps } from "@/lib/frameworks/journey-map/ops";
-import { renderCellText } from "@/lib/cell-text";
 import { kindTheme } from "@/lib/row-kind-theme";
 import { GeneratePanel } from "@/components/GeneratePanel";
 import type { GenerateEvent } from "@/lib/pipeline/events";
@@ -79,6 +78,17 @@ function blockFocusPreviews(
   return out;
 }
 
+function previewSnippet(text: string, maxWords = 6): string {
+  const words = text
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .filter(Boolean);
+  if (!words.length) return "Empty";
+  if (words.length <= maxWords) return words.join(" ");
+  return `${words.slice(0, maxWords).join(" ")}…`;
+}
+
 export function Copilot({
   frameworkId,
   map,
@@ -113,6 +123,10 @@ export function Copilot({
 
   function handleGenerateSuccess(nextMap: JourneyMap, summary: string) {
     onMapChange(nextMap);
+    // GeneratePanel unmounts immediately after we switch modes; clear parent-level
+    // busy/progress here so we never leave the board in a stale "processing" state.
+    setBusyBoth(false);
+    onGenerationProgress?.(null);
     setMode("chat");
     setExpanded(true);
     setMessages((m) => [
@@ -378,39 +392,21 @@ export function Copilot({
             <div className="flex gap-2 overflow-x-auto pb-0.5 -mx-1 px-1 [scrollbar-width:thin]">
               {cardPreviews.map((p) => {
                 const theme = kindTheme(p.rowKind);
-                const Icon = theme.Icon;
                 return (
-                  <div
+                  <span
                     key={p.cellId}
                     className={[
-                      "shrink-0 w-[148px] rounded-lg border shadow-card",
-                      "flex flex-col p-2 pl-2.5 text-left",
+                      "shrink-0 max-w-[180px] rounded-full border",
+                      "px-2.5 py-1 text-[10px] leading-none",
+                      "font-medium text-ink-primary truncate",
                       theme.tintBg,
-                      `border-l-[3px] ${theme.accentBorder}`,
+                      `border-l-2 ${theme.accentBorder}`,
                       "border-border-soft",
                     ].join(" ")}
+                    title={p.text || "Empty"}
                   >
-                    <div className="flex items-center justify-between gap-1 mb-1.5">
-                      <span
-                        className={[
-                          "inline-flex h-4 w-4 items-center justify-center rounded",
-                          theme.chipBg,
-                        ].join(" ")}
-                      >
-                        <Icon className={`h-2.5 w-2.5 ${theme.chipText}`} />
-                      </span>
-                    </div>
-                    <p className="font-mono text-[8px] leading-tight text-ink-muted uppercase tracking-wide truncate mb-1">
-                      {p.rowLabel} · {p.stageLabel}
-                    </p>
-                    <div className="font-sans text-[11px] leading-snug text-ink-primary line-clamp-4 break-words min-h-[2.75rem]">
-                      {p.text ? (
-                        renderCellText(p.text, p.rowKind)
-                      ) : (
-                        <span className="text-ink-muted italic">Empty</span>
-                      )}
-                    </div>
-                  </div>
+                    {previewSnippet(p.text)}
+                  </span>
                 );
               })}
             </div>

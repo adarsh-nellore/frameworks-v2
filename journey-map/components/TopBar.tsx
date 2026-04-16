@@ -2,7 +2,6 @@
 
 import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
-import { Check, ClipboardCopy } from "lucide-react";
 import type { JourneyMap } from "@/lib/frameworks/journey-map/types";
 
 const ThemeMenu = dynamic(
@@ -18,16 +17,33 @@ const ThemeMenu = dynamic(
   }
 );
 
+const ExportMenu = dynamic(
+  () =>
+    import("@/components/ExportMenu").then((m) => ({ default: m.ExportMenu })),
+  {
+    ssr: false,
+    loading: () => (
+      <div
+        className="h-7 w-16 shrink-0 rounded-full bg-ink-primary/[0.06] animate-pulse"
+        aria-hidden
+      />
+    ),
+  }
+);
+
 type Props = {
   title: string;
   onTitleChange: (title: string) => void;
-  /** Anything serializable; copied to clipboard as JSON. */
-  data: unknown;
   map: JourneyMap;
+  exportLocked?: boolean;
 };
 
-export function TopBar({ title, onTitleChange, data, map }: Props) {
-  const [copied, setCopied] = useState(false);
+export function TopBar({
+  title,
+  onTitleChange,
+  map,
+  exportLocked = false,
+}: Props) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(title);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -47,12 +63,6 @@ export function TopBar({ title, onTitleChange, data, map }: Props) {
     const t = draft.trim();
     if (t && t !== title) onTitleChange(t);
     else setDraft(title);
-  }
-
-  async function copyJson() {
-    await navigator.clipboard.writeText(JSON.stringify(data, null, 2));
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
   }
 
   return (
@@ -95,24 +105,8 @@ export function TopBar({ title, onTitleChange, data, map }: Props) {
           {title}
         </button>
       )}
-      <ThemeMenu map={map} />
-      <button
-        type="button"
-        onClick={copyJson}
-        className="ml-1 inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-ink-primary/[0.06] hover:bg-ink-primary/[0.10] text-[11px] font-medium text-ink-secondary hover:text-ink-primary transition-colors shrink-0"
-      >
-        {copied ? (
-          <>
-            <Check className="h-3 w-3 text-emerald-600" />
-            Copied
-          </>
-        ) : (
-          <>
-            <ClipboardCopy className="h-3 w-3" />
-            JSON
-          </>
-        )}
-      </button>
+      <ThemeMenu />
+      <ExportMenu map={map} exportLocked={exportLocked} />
     </header>
   );
 }

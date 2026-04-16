@@ -48,3 +48,13 @@ export type ThemeV1 = {
   lanes: Record<string, LaneTokenSet>;
   fonts?: FontTokens;
 };
+
+/** Simplified brand input — 3 hex colors + optional fonts.
+ *  `deriveTheme()` deterministically produces a full ThemeV1 from this. */
+export type BrandInput = {
+  primary: string;    // hex — brand anchor (e.g. "#862b00")
+  secondary: string;  // hex — surface/background tone (e.g. "#f5f3f0")
+  accent: string;     // hex — pop/highlight color (e.g. "#f0a83a")
+  sansFont?: string;  // Google Font name (e.g. "DM Sans")
+  monoFont?: string;  // Google Font name (e.g. "JetBrains Mono")
+};

@@ -17,3 +17,5 @@ export {
 } from "./storage";
 export { buildGoogleFontsHref } from "./google-fonts";
 export { buildHandoffBundle, buildHandoffJson } from "./handoff";
+export type { BrandInput } from "./types";
+export { deriveTheme } from "./derive";

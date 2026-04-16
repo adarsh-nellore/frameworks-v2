@@ -178,7 +178,12 @@ function PageInner() {
         </div>
       </Canvas>
 
-      <TopBar title={map.title} onTitleChange={onTitleChange} data={map} map={map} />
+      <TopBar
+        title={map.title}
+        onTitleChange={onTitleChange}
+        map={map}
+        exportLocked={generationActive}
+      />
 
       <Copilot
         frameworkId={framework.id}

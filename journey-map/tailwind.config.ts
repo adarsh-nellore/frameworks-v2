@@ -1,11 +1,33 @@
 import type { Config } from "tailwindcss";
 
+// Lane CSS classes are built dynamically via template interpolation in
+// lib/row-kind-theme.ts — Tailwind's JIT scanner can't resolve ${kind},
+// so we must safelist them explicitly.
+const LANE_KINDS = [
+  "actions", "touchpoints", "thoughts", "emotions", "pain_points",
+  "opportunities", "metrics", "stakeholders", "systems", "channels",
+  "decisions", "artifacts", "neutral",
+];
+const laneSafelist: string[] = [];
+for (const kind of LANE_KINDS) {
+  laneSafelist.push(
+    `bg-[rgb(var(--lane-${kind}-tint)/1)]`,
+    `bg-[rgb(var(--lane-${kind}-chip-bg)/1)]`,
+    `bg-[rgb(var(--lane-${kind}-highlight-bg)/0.8)]`,
+    `text-[rgb(var(--lane-${kind}-accent)/1)]`,
+    `text-[rgb(var(--lane-${kind}-chip-text)/1)]`,
+    `text-[rgb(var(--lane-${kind}-highlight-text)/1)]`,
+    `border-[rgb(var(--lane-${kind}-border)/1)]`,
+  );
+}
+
 export default {
   content: [
     "./app/**/*.{ts,tsx}",
     "./components/**/*.{ts,tsx}",
     "./lib/**/*.{ts,tsx}",
   ],
+  safelist: laneSafelist,
   theme: {
     extend: {
       fontFamily: {

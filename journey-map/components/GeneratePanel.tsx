@@ -212,8 +212,6 @@ export function GeneratePanel({
       setUrlDraft("");
       setTitle("");
       setPersona("");
-      // Clear progress slightly later so the parent can animate the overlay out.
-      setTimeout(() => onProgress?.(null), 600);
     } catch (e) {
       const msg =
         e instanceof DOMException && e.name === "AbortError"
@@ -222,9 +220,9 @@ export function GeneratePanel({
             ? e.message
             : "Unknown error";
       if (msg !== "Cancelled") setError(msg);
-      onProgress?.(null);
     } finally {
       abortRef.current = null;
+      onProgress?.(null);
       setStage("idle");
     }
   }
