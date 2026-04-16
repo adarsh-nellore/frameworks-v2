@@ -1,10 +1,18 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Sparkles, ArrowRight } from "lucide-react";
-import { PromptComposer, type PromptSubmitPayload } from "@/components/PromptComposer";
-import { FrameworkLibrary } from "@/components/FrameworkLibrary";
+import {
+  ArrowUp,
+  ChevronDown,
+  ChevronUp,
+  FileText,
+  Link2,
+  Paperclip,
+  Sparkles,
+  X,
+} from "lucide-react";
+import { FrameworkPills } from "@/components/FrameworkPills";
 import { useCanvas } from "@/lib/canvas/context";
 import { useGenerateStream } from "@/lib/hooks/use-generate-stream";
 import { useDescribeFramework } from "@/lib/hooks/use-describe-framework";
@@ -13,19 +21,21 @@ import type { UniversalMap } from "@/lib/frameworks/universal/types";
 import type { FrameworkConfig } from "@/lib/frameworks/universal/config";
 import type { GenerateEvent } from "@/lib/pipeline/events";
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Landing page ("/")
-//
-// Prompt-first UX:
-//  - User types a prompt + optionally uploads files/URLs + optionally picks a
-//    framework from the right rail.
-//  - No framework picked → /api/framework-describe synthesizes a structure and
-//    populates it in one shot (~5–10s). Single-request, non-streaming.
-//  - Framework picked → /api/generate streams events for the user to watch.
-//
-// On success, we addBoard() into CanvasContext (survives router navigation
-// because the provider is in app/layout.tsx) and router.push("/canvas").
-// ──────────────────────────────────────────────────────────────────────────────
+const ACCEPTED_EXTS = [".pdf", ".docx", ".txt", ".md", ".json"];
+const ACCEPTED_ATTR = ACCEPTED_EXTS.join(",");
+const MAX_FILE_BYTES = 10 * 1024 * 1024;
+const MAX_TOTAL_BYTES = 50 * 1024 * 1024;
+
+function hasSupportedExt(name: string): boolean {
+  const lower = name.toLowerCase();
+  return ACCEPTED_EXTS.some((ext) => lower.endsWith(ext));
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
 
 export default function LandingPage() {
   const router = useRouter();
@@ -35,42 +45,106 @@ export default function LandingPage() {
   const [mounted, setMounted] = useState(false);
   const [isNarrow, setIsNarrow] = useState(false);
 
+  // Input state
+  const [text, setText] = useState("");
+  const [files, setFiles] = useState<File[]>([]);
+  const [urls, setUrls] = useState<string[]>([]);
+  const [urlDraftOpen, setUrlDraftOpen] = useState(false);
+  const [urlDraft, setUrlDraft] = useState("");
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [title, setTitle] = useState("");
+  const [persona, setPersona] = useState("");
+  const [fidelityMode, setFidelityMode] = useState(true);
+  const [dragOver, setDragOver] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
   const existingIds = useMemo(() => listFrameworks().map((fw) => fw.id), []);
 
   const describe = useDescribeFramework();
   const generate = useGenerateStream({
     onProgress: setProgressEvent,
-    onSuccess: () => {
-      // onSuccess is wired per-submit below; setting null here just clears
-      // any residual progress event if the user stays on the landing.
-      setProgressEvent(null);
-    },
   });
 
   const busy = describe.busy || generate.busy;
 
   useEffect(() => {
     setMounted(true);
-    const check = () => setIsNarrow(window.innerWidth < 900);
+    const check = () => setIsNarrow(window.innerWidth < 720);
     check();
     window.addEventListener("resize", check);
     return () => window.removeEventListener("resize", check);
   }, []);
 
-  async function handleSubmit(payload: PromptSubmitPayload) {
-    const hasSources = payload.files.length > 0 || payload.urls.length > 0;
-    const hasText = payload.text.length > 0;
+  // Auto-focus textarea on mount (but not if the viewport is too narrow — avoids
+  // opening the iOS keyboard on phones that somehow got past the gate).
+  useEffect(() => {
+    if (mounted && !isNarrow) textareaRef.current?.focus();
+  }, [mounted, isNarrow]);
+
+  const totalBytes = files.reduce((s, f) => s + f.size, 0) + text.length;
+  const sourcesCount = (text.trim() ? 1 : 0) + files.length + urls.length;
+  const canSubmit = !busy && sourcesCount > 0 && totalBytes <= MAX_TOTAL_BYTES;
+
+  function acceptFiles(incoming: FileList | File[]) {
+    const next: File[] = [...files];
+    let err: string | null = null;
+    for (const f of Array.from(incoming)) {
+      if (!hasSupportedExt(f.name)) {
+        err = `"${f.name}": unsupported type. Allowed: ${ACCEPTED_EXTS.join(", ")}`;
+        continue;
+      }
+      if (f.size > MAX_FILE_BYTES) {
+        err = `"${f.name}" is ${formatBytes(f.size)}; max per file is ${formatBytes(MAX_FILE_BYTES)}.`;
+        continue;
+      }
+      if (next.some((x) => x.name === f.name && x.size === f.size)) continue;
+      next.push(f);
+    }
+    setFiles(next);
+    setLocalError(err);
+  }
+
+  function removeFile(i: number) {
+    setFiles((curr) => curr.filter((_, idx) => idx !== i));
+  }
+
+  function addUrl() {
+    const u = urlDraft.trim();
+    if (!u) return;
+    if (!/^https?:\/\//i.test(u)) {
+      setLocalError("URL must start with http:// or https://");
+      return;
+    }
+    if (urls.includes(u)) {
+      setUrlDraft("");
+      return;
+    }
+    setUrls((curr) => [...curr, u]);
+    setUrlDraft("");
+    setUrlDraftOpen(false);
+    setLocalError(null);
+  }
+
+  function removeUrl(i: number) {
+    setUrls((curr) => curr.filter((_, idx) => idx !== i));
+  }
+
+  async function handleSubmit() {
+    if (!canSubmit) return;
+    setLocalError(null);
+
+    const hasSources = files.length > 0 || urls.length > 0;
+    const hasText = text.trim().length > 0;
 
     if (!selectedId) {
-      // Custom synthesis path — single-call describe. Requires a prompt.
       if (!hasText) return;
       if (hasSources) {
-        // Phase 1 MVP: describe doesn't ingest files. Prompt user to pick a
-        // framework first if they want to use source files.
-        alert("Pick a framework from the right to generate from uploaded files. The custom (prompt-only) flow can't read files yet.");
+        setLocalError("Pick a framework to generate from uploaded files. The custom (prompt-only) flow can't read files yet.");
         return;
       }
-      const result = await describe.submit(payload.text, existingIds);
+      const result = await describe.submit(text, existingIds);
       if (!result) return;
       const board = addBoard({
         frameworkId: result.config.id,
@@ -83,159 +157,380 @@ export default function LandingPage() {
       return;
     }
 
-    // Framework selected → /api/generate streams, wait for completion, then navigate.
-    // (Streaming while navigating is deferred to Phase 2 — it requires hoisting
-    // the generation state into CanvasContext so it survives route changes.)
     const fw = listFrameworks().find((f) => f.id === selectedId);
     if (!fw) return;
 
     const result = await generate.submit({
       frameworkId: fw.id,
-      text: hasText ? payload.text : undefined,
-      files: payload.files,
-      urls: payload.urls,
-      title: payload.title,
-      persona: payload.persona,
-      fidelityMode: payload.fidelityMode,
+      text: hasText ? text : undefined,
+      files,
+      urls,
+      title: title || undefined,
+      persona: persona || undefined,
+      fidelityMode,
     });
     if (!result) return;
 
     const board = addBoard({
       frameworkId: fw.id,
       customConfig: isDynamicFramework(fw.id) ? (fw.config as FrameworkConfig) : undefined,
-      title: result.map.title || payload.title || fw.seed.title || fw.label,
+      title: result.map.title || title || fw.seed.title || fw.label,
       map: result.map,
       makeActive: true,
     });
     router.push(`/canvas?b=${board.id}`);
   }
 
-  // Desktop-only notice for narrow viewports
+  function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      handleSubmit();
+    }
+  }
+
   if (mounted && isNarrow) {
     return (
       <div className="fixed inset-0 flex items-center justify-center p-8">
-        <div className="max-w-sm text-center space-y-3">
+        <div className="max-w-sm text-center space-y-3 glass rounded-2xl p-6">
           <Sparkles className="h-6 w-6 text-ink-primary mx-auto" />
           <h1 className="text-[18px] font-medium text-ink-primary">Use a desktop</h1>
           <p className="text-[13px] text-ink-muted leading-relaxed">
-            Frameworks is a workspace for designing and iterating on strategic canvases. It's built for desktop — open it on a wider screen to get started.
+            Frameworks is a workspace for designing and iterating on strategic canvases. It's built for desktop — open on a wider screen to get started.
           </p>
         </div>
       </div>
     );
   }
 
-  const describeError = describe.error;
-  const generateError = generate.error;
-  const combinedError = describeError || generateError;
+  const combinedError = localError || describe.error || generate.error;
+  const selectedFramework = selectedId ? listFrameworks().find((fw) => fw.id === selectedId) : null;
 
   return (
-    <div className="min-h-dvh" style={{ background: "rgb(var(--canvas))" }}>
-      <div className="mx-auto max-w-[1200px] px-6 lg:px-8 py-10 lg:py-14">
-        {/* Header */}
-        <header className="flex items-center justify-between mb-10 lg:mb-14">
-          <div className="flex items-center gap-2">
-            <div className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-ink-primary text-white">
-              <Sparkles className="h-4 w-4" />
-            </div>
-            <span className="font-medium text-[15px] text-ink-primary">Frameworks</span>
-          </div>
-          {boards.length > 0 && (
-            <button
-              onClick={() => router.push("/canvas")}
-              className="inline-flex items-center gap-1.5 text-[12px] text-ink-secondary hover:text-ink-primary transition-colors"
-            >
-              Open workspace
-              <ArrowRight className="h-3.5 w-3.5" />
-            </button>
-          )}
-        </header>
+    <main className="fixed inset-0 overflow-hidden">
+      {/* Minimal header — logo top-left only, nothing else */}
+      <header className="absolute top-5 left-6 z-10 flex items-center gap-2">
+        <div className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-ink-primary text-white">
+          <Sparkles className="h-3.5 w-3.5" />
+        </div>
+        <span className="font-medium text-[14px] text-ink-primary">Frameworks</span>
+      </header>
 
-        {/* Main two-column layout */}
-        <div className="grid lg:grid-cols-[1fr_320px] gap-6 lg:gap-10">
-          {/* Left: prompt hero */}
-          <main className="space-y-6">
-            <div className="space-y-3">
-              <h1 className="text-[32px] lg:text-[40px] font-medium text-ink-primary leading-tight tracking-tight">
-                Describe what you want to make.
-              </h1>
-              <p className="text-[14px] lg:text-[15px] text-ink-secondary leading-relaxed max-w-[560px]">
-                Start with an open prompt. Drop files for context. Or pick a framework template from the library to structure your thinking.
-              </p>
-            </div>
+      {/* Deep-link to workspace when boards already exist */}
+      {boards.length > 0 && (
+        <button
+          onClick={() => router.push("/canvas")}
+          className="absolute top-5 right-6 z-10 inline-flex items-center gap-1.5 rounded-full glass px-3 py-1.5 text-[12px] text-ink-secondary hover:text-ink-primary transition-colors"
+        >
+          Open workspace
+          <span className="text-ink-muted">→</span>
+        </button>
+      )}
 
-            <div className="rounded-3xl bg-surface shadow-panel ring-1 ring-border-soft/70 p-5 lg:p-6">
-              <PromptComposer
-                size="hero"
-                busy={busy}
-                error={combinedError}
-                placeholder={
-                  selectedId
-                    ? "Describe your source material, persona, or theme. Or drop files below."
-                    : "A 2×2 matrix for prioritizing features by impact and effort… a stakeholder map by influence and interest…"
-                }
-                submitLabel={selectedId ? "Generate from sources" : "Design and generate framework"}
-                onSubmit={handleSubmit}
-                headerSlot={
-                  selectedId ? (
-                    <div className="flex items-center gap-1.5">
-                      <span className="font-mono text-[9px] uppercase tracking-[0.22em] text-ink-muted">
-                        Using
-                      </span>
-                      <span className="text-[12px] font-medium text-ink-primary">
-                        {listFrameworks().find((fw) => fw.id === selectedId)?.label ?? selectedId}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setSelectedId(null)}
-                        className="text-[11px] text-ink-muted hover:text-ink-primary underline-offset-2 hover:underline"
-                      >
-                        Clear
-                      </button>
-                    </div>
-                  ) : (
-                    <span className="font-mono text-[9px] uppercase tracking-[0.22em] text-ink-muted">
-                      Default: custom synthesis
+      {/* Centered prompt area — scrolls when advanced options expand past the viewport */}
+      <div className="h-full overflow-y-auto chat-scroll">
+        <div className="min-h-full flex items-center justify-center px-6 py-16">
+          <div className="w-full max-w-[720px] space-y-5">
+          {/* Prompt box (glassmorphic) */}
+          <div
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragOver(true);
+            }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDragOver(false);
+              if (e.dataTransfer.files?.length) acceptFiles(e.dataTransfer.files);
+            }}
+            className={[
+              "glass-strong rounded-[28px] transition-colors",
+              dragOver ? "ring-2 ring-ink-primary/30" : "",
+            ].join(" ")}
+          >
+            {/* Attached file + URL chips (above textarea, only when present) */}
+            {(files.length > 0 || urls.length > 0) && (
+              <div className="flex flex-wrap gap-1.5 px-5 pt-4">
+                {files.map((f, i) => (
+                  <span
+                    key={`f-${f.name}-${i}`}
+                    className="inline-flex items-center gap-1.5 rounded-full bg-white/80 border border-border-soft px-2.5 py-1 text-[11px] text-ink-secondary"
+                  >
+                    <FileText className="h-3 w-3 text-ink-muted shrink-0" />
+                    <span className="truncate max-w-[180px]" title={f.name}>{f.name}</span>
+                    <span className="text-ink-muted font-mono">{formatBytes(f.size)}</span>
+                    <button
+                      type="button"
+                      onClick={() => removeFile(i)}
+                      disabled={busy}
+                      className="text-ink-muted hover:text-ink-primary disabled:opacity-40"
+                      aria-label={`Remove ${f.name}`}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                ))}
+                {urls.map((u, i) => (
+                  <span
+                    key={`u-${u}-${i}`}
+                    className="inline-flex items-center gap-1.5 rounded-full bg-white/80 border border-border-soft px-2.5 py-1 text-[11px] text-ink-secondary"
+                  >
+                    <Link2 className="h-3 w-3 text-ink-muted shrink-0" />
+                    <span className="truncate max-w-[200px]" title={u}>{u}</span>
+                    <button
+                      type="button"
+                      onClick={() => removeUrl(i)}
+                      disabled={busy}
+                      className="text-ink-muted hover:text-ink-primary disabled:opacity-40"
+                      aria-label={`Remove ${u}`}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+
+            <textarea
+              ref={textareaRef}
+              rows={4}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={onKeyDown}
+              disabled={busy}
+              placeholder={
+                selectedFramework
+                  ? `Describe your source material or theme for the ${selectedFramework.label.toLowerCase()}…`
+                  : "Describe what you want to make…"
+              }
+              className={[
+                "w-full resize-none bg-transparent outline-none",
+                "px-5 pt-5 pb-3 text-[15px] leading-relaxed text-ink-primary placeholder:text-ink-muted",
+                busy ? "opacity-60" : "",
+              ].join(" ")}
+            />
+
+            {/* Inline URL editor (collapsed by default) */}
+            {urlDraftOpen && (
+              <div className="px-5 pb-3 flex items-center gap-2">
+                <Link2 className="h-3.5 w-3.5 text-ink-muted shrink-0" />
+                <input
+                  type="url"
+                  autoFocus
+                  value={urlDraft}
+                  onChange={(e) => setUrlDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addUrl();
+                    } else if (e.key === "Escape") {
+                      setUrlDraft("");
+                      setUrlDraftOpen(false);
+                    }
+                  }}
+                  disabled={busy}
+                  placeholder="https://…"
+                  className="flex-1 rounded-md bg-white/80 border border-border-soft focus:border-ink-primary px-2.5 py-1 text-[12px] text-ink-primary placeholder:text-ink-muted outline-none transition-colors"
+                />
+                <button
+                  type="button"
+                  onClick={addUrl}
+                  disabled={busy || !urlDraft.trim()}
+                  className="text-[11px] font-medium text-ink-primary hover:text-ink-secondary disabled:opacity-40 transition-colors"
+                >
+                  Add
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUrlDraft("");
+                    setUrlDraftOpen(false);
+                  }}
+                  className="text-ink-muted hover:text-ink-primary transition-colors"
+                  aria-label="Cancel URL"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
+
+            {/* Bottom toolbar — inside the box */}
+            <div className="flex items-center justify-between gap-2 px-3 pb-3">
+              <div className="flex items-center gap-0.5">
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={busy}
+                  className="inline-flex items-center justify-center h-8 w-8 rounded-full text-ink-muted hover:text-ink-primary hover:bg-white/70 disabled:opacity-40 transition-colors"
+                  title="Attach files"
+                  aria-label="Attach files"
+                >
+                  <Paperclip className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setUrlDraftOpen((o) => !o)}
+                  disabled={busy}
+                  className={[
+                    "inline-flex items-center justify-center h-8 w-8 rounded-full transition-colors",
+                    urlDraftOpen
+                      ? "bg-ink-primary/[0.08] text-ink-primary"
+                      : "text-ink-muted hover:text-ink-primary hover:bg-white/70",
+                    busy ? "opacity-40" : "",
+                  ].join(" ")}
+                  title="Add URL"
+                  aria-label="Add URL"
+                >
+                  <Link2 className="h-4 w-4" />
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept={ACCEPTED_ATTR}
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    if (e.target.files?.length) acceptFiles(e.target.files);
+                    e.target.value = "";
+                  }}
+                />
+              </div>
+
+              <div className="flex items-center gap-2">
+                {selectedFramework && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-[rgb(var(--accent))]/[0.12] text-[rgb(var(--accent))] px-2.5 py-1 text-[11px] font-medium max-w-[200px]">
+                    <span className="truncate">{selectedFramework.label}</span>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedId(null)}
+                      disabled={busy}
+                      className="opacity-70 hover:opacity-100 disabled:opacity-30"
+                      aria-label="Clear framework"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={handleSubmit}
+                  disabled={!canSubmit}
+                  className={[
+                    "inline-flex items-center justify-center h-9 w-9 rounded-full transition-colors",
+                    canSubmit
+                      ? "bg-ink-primary text-white hover:bg-[#1b1c20]"
+                      : "bg-ink-primary/10 text-ink-muted cursor-not-allowed",
+                  ].join(" ")}
+                  aria-label="Build"
+                  title="Build (⌘↵)"
+                >
+                  {busy ? (
+                    <span className="inline-flex items-center gap-0.5">
+                      <span className="h-1 w-1 rounded-full bg-white/80 animate-pulse [animation-delay:0ms]" />
+                      <span className="h-1 w-1 rounded-full bg-white/80 animate-pulse [animation-delay:150ms]" />
+                      <span className="h-1 w-1 rounded-full bg-white/80 animate-pulse [animation-delay:300ms]" />
                     </span>
-                  )
-                }
-              />
+                  ) : (
+                    <ArrowUp className="h-4 w-4" />
+                  )}
+                </button>
+              </div>
             </div>
+          </div>
 
-            {/* Progress / streaming hint while describe is running */}
-            {describe.busy && (
-              <div className="rounded-xl bg-white/80 border border-border-soft px-4 py-3 text-[13px] text-ink-secondary inline-flex items-center gap-3">
-                <span className="inline-flex items-center gap-1">
-                  <span className="h-1.5 w-1.5 rounded-full bg-ink-primary/60 animate-pulse [animation-delay:0ms]" />
-                  <span className="h-1.5 w-1.5 rounded-full bg-ink-primary/60 animate-pulse [animation-delay:150ms]" />
-                  <span className="h-1.5 w-1.5 rounded-full bg-ink-primary/60 animate-pulse [animation-delay:300ms]" />
+          {/* Framework pills — search + selectable chips */}
+          <FrameworkPills selectedId={selectedId} onSelect={setSelectedId} />
+
+          {/* Advanced options — collapsible */}
+          <div className="flex items-center justify-center">
+            <button
+              type="button"
+              onClick={() => setShowAdvanced((v) => !v)}
+              disabled={busy}
+              className="inline-flex items-center gap-1 text-[11px] font-mono uppercase tracking-wider text-ink-muted hover:text-ink-primary transition-colors disabled:opacity-40"
+            >
+              {showAdvanced ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+              Advanced
+            </button>
+          </div>
+          {showAdvanced && (
+            <div className="glass rounded-2xl p-4 space-y-3">
+              <div className="grid grid-cols-2 gap-2">
+                <input
+                  type="text"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  disabled={busy}
+                  placeholder="Title hint"
+                  className="rounded-lg bg-white/60 border border-border-soft hover:border-border-medium focus:border-ink-primary focus:bg-white px-2.5 py-1.5 text-[12px] text-ink-primary placeholder:text-ink-muted outline-none transition-colors"
+                />
+                <input
+                  type="text"
+                  value={persona}
+                  onChange={(e) => setPersona(e.target.value)}
+                  disabled={busy}
+                  placeholder="Persona hint"
+                  className="rounded-lg bg-white/60 border border-border-soft hover:border-border-medium focus:border-ink-primary focus:bg-white px-2.5 py-1.5 text-[12px] text-ink-primary placeholder:text-ink-muted outline-none transition-colors"
+                />
+              </div>
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={fidelityMode}
+                  onChange={(e) => setFidelityMode(e.target.checked)}
+                  disabled={busy}
+                  className="h-3.5 w-3.5 rounded border-border-medium text-ink-primary focus:ring-1 focus:ring-ink-primary/30"
+                />
+                <span className="text-[12px] text-ink-secondary leading-snug">
+                  Higher fidelity{" "}
+                  <span className="text-ink-muted">(critique + revision pass; ~30–60s slower)</span>
                 </span>
-                <span>Designing framework structure and filling in content…</span>
-              </div>
-            )}
-            {progressEvent && progressEvent.phase !== "result" && progressEvent.phase !== "error" && (
-              <div className="rounded-xl bg-white/80 border border-border-soft px-4 py-3 text-[13px] text-ink-secondary">
-                {progressEvent.phase === "ingesting" && "Reading source material…"}
-                {progressEvent.phase === "subject_id" && "Identifying the subject…"}
-                {progressEvent.phase === "extracting" && "Extracting key details…"}
-                {progressEvent.phase === "synthesizing" && "Structuring into a framework…"}
-                {progressEvent.phase === "critiquing" && "Critiquing output quality…"}
-                {progressEvent.phase === "revising" && "Revising based on critique…"}
-              </div>
-            )}
-          </main>
-
-          {/* Right: framework library rail */}
-          <aside className="lg:sticky lg:top-8 self-start">
-            <div className="rounded-2xl bg-white/70 shadow-card ring-1 ring-border-soft/70 p-4 lg:p-5 max-h-[calc(100dvh-8rem)] overflow-y-auto chat-scroll">
-              <FrameworkLibrary
-                selectedId={selectedId}
-                onSelect={setSelectedId}
-              />
+              </label>
             </div>
-          </aside>
+          )}
+
+          {/* Progress / errors */}
+          {busy && (
+            <div className="glass rounded-xl px-4 py-3 text-[12px] text-ink-secondary inline-flex items-center gap-3 mx-auto">
+              <span className="inline-flex items-center gap-1">
+                <span className="h-1.5 w-1.5 rounded-full bg-ink-primary/60 animate-pulse [animation-delay:0ms]" />
+                <span className="h-1.5 w-1.5 rounded-full bg-ink-primary/60 animate-pulse [animation-delay:150ms]" />
+                <span className="h-1.5 w-1.5 rounded-full bg-ink-primary/60 animate-pulse [animation-delay:300ms]" />
+              </span>
+              <span>{currentProgressCopy(progressEvent, describe.busy)}</span>
+            </div>
+          )}
+          {combinedError && !busy && (
+            <div className="glass rounded-xl px-4 py-3 text-[12px] text-rose-900 bg-rose-50/80 border border-rose-100">
+              {combinedError}
+            </div>
+          )}
+          </div>
         </div>
       </div>
-    </div>
+    </main>
   );
+}
+
+function currentProgressCopy(
+  ev: GenerateEvent<UniversalMap> | null,
+  describing: boolean
+): string {
+  if (describing) return "Designing framework structure and filling in content…";
+  if (!ev) return "Preparing…";
+  switch (ev.phase) {
+    case "ingesting":
+      return "Reading source material…";
+    case "subject_id":
+      return "Identifying the subject…";
+    case "extracting":
+      return "Extracting key details…";
+    case "synthesizing":
+      return "Structuring into a framework…";
+    case "critiquing":
+      return "Critiquing output quality…";
+    case "revising":
+      return "Revising based on critique…";
+    default:
+      return "Working…";
+  }
 }
