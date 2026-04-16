@@ -1,9 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { applyTheme, loadStoredThemeJson, parseThemeV1 } from "@/lib/theme";
+import {
+  applyDesignTokenCssVars,
+  applyTheme,
+  loadStoredDesignTokenCssVarsJson,
+  loadStoredThemeJson,
+  parseThemeImport,
+} from "@/lib/theme";
 import { Canvas } from "@/components/Canvas";
 import { Copilot } from "@/components/Copilot";
+import { GenerationOverlay } from "@/components/GenerationOverlay";
 import { TopBar } from "@/components/TopBar";
 import { ZoomControls } from "@/components/ZoomControls";
 import { getFramework } from "@/lib/frameworks";
@@ -11,6 +18,7 @@ import type {
   JourneyMap as JM,
   JourneyMapSelection,
 } from "@/lib/frameworks/journey-map/types";
+import type { GenerateEvent } from "@/lib/pipeline/events";
 import { ZoomProvider, useZoom } from "@/lib/zoom-context";
 
 const FRAMEWORK_ID = "journey-map";
@@ -28,8 +36,24 @@ function PageInner() {
   const [map, setMap] = useState<JM>(framework.seed as JM);
   const [selection, setSelection] = useState<JourneyMapSelection | null>(null);
   const [busy, setBusy] = useState(false);
+  const [generation, setGeneration] = useState<GenerateEvent<JM> | null>(null);
+  const cancelGenerationRef = useRef<(() => void) | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const { fitToContent } = useZoom();
+
+  const generationActive =
+    generation !== null &&
+    generation.phase !== "result" &&
+    generation.phase !== "error";
+
+  const registerCancel = useCallback((cancel: (() => void) | null) => {
+    cancelGenerationRef.current = cancel;
+  }, []);
+
+  const onGenerationCancel = useCallback(() => {
+    cancelGenerationRef.current?.();
+    setGeneration(null);
+  }, []);
 
   const Component = framework.Component as React.ComponentType<{
     map: JM;
@@ -104,21 +128,36 @@ function PageInner() {
     setMap((m) => ({ ...m, title }));
   }, []);
 
-  // Hydrate saved design tokens before paint (localStorage).
+  // Hydrate saved theme + optional raw `--var` map from a design-token bundle.
   useLayoutEffect(() => {
-    const raw = loadStoredThemeJson();
-    if (!raw) return;
     try {
-      const parsed = parseThemeV1(JSON.parse(raw) as unknown);
-      if (parsed.ok) applyTheme(parsed.theme);
+      const raw = loadStoredThemeJson();
+      if (raw) {
+        try {
+          const parsed = parseThemeImport(JSON.parse(raw) as unknown);
+          if (parsed.ok) applyTheme(parsed.theme);
+        } catch {
+          /* ignore corrupt storage */
+        }
+      }
+      const extra = loadStoredDesignTokenCssVarsJson();
+      if (extra) {
+        try {
+          applyDesignTokenCssVars(JSON.parse(extra) as Record<string, string>);
+        } catch {
+          applyDesignTokenCssVars(undefined);
+        }
+      } else {
+        applyDesignTokenCssVars(undefined);
+      }
     } catch {
-      /* ignore corrupt storage */
+      applyDesignTokenCssVars(undefined);
     }
   }, []);
 
   return (
     <div className="fixed inset-0">
-      <Canvas>
+      <Canvas locked={generationActive}>
         <div ref={stageRef} className="p-12">
           <div
             data-map-page
@@ -149,9 +188,17 @@ function PageInner() {
         onBusyChange={setBusy}
         focus={selection}
         onFocusClear={() => setSelection(null)}
+        onGenerationProgress={setGeneration}
+        registerGenerationCancel={registerCancel}
       />
 
       <ZoomControls onFit={fitNow} />
+
+      <GenerationOverlay
+        active={generationActive}
+        progress={generation}
+        onCancel={onGenerationCancel}
+      />
     </div>
   );
 }

@@ -1,6 +1,65 @@
 import type { LaneTokenSet, SemanticTokens, ThemeV1 } from "./types";
 import { buildGoogleFontsHref, removeGoogleFontLinks, upsertGoogleFontLink } from "./google-fonts";
 
+/** Inline `--foo` vars from an external design system (cleared with {@link clearAppliedTheme}). */
+let appliedDesignTokenKeys: string[] = [];
+
+/**
+ * Names we already drive via {@link applyTheme} or that must stay compatible with
+ * `rgb(var(--…) / α)` in Tailwind/globals — injecting foreign values (hex, full shadows)
+ * breaks paint (e.g. blank canvas).
+ */
+const AUXILIARY_VAR_DENY_EXACT = new Set([
+  "--canvas",
+  "--surface",
+  "--surface-subtle",
+  "--surface-hover",
+  "--ink-primary",
+  "--ink-secondary",
+  "--ink-muted",
+  "--border-soft",
+  "--border-medium",
+  "--shadow-tint",
+  "--shadow-panel",
+  "--shadow-card",
+  "--shadow-card-hover",
+  "--wash-north",
+  "--wash-east",
+  "--wash-south-west",
+  "--dot-grid",
+  "--glass-surface",
+  "--glass-border",
+  "--glass-inset",
+  "--font-sans",
+  "--font-mono",
+  "--jm-font-sans",
+  "--jm-font-mono",
+]);
+
+function isDesignTokenVarKeyAllowed(key: string): boolean {
+  if (!key.startsWith("--")) return false;
+  if (AUXILIARY_VAR_DENY_EXACT.has(key)) return false;
+  if (key.startsWith("--lane-")) return false;
+  // App shadows expect `rgb(var(--shadow-tint) / …)`; design files use different `--shadow-*`.
+  if (key.startsWith("--shadow-")) return false;
+  return true;
+}
+
+export function applyDesignTokenCssVars(flat: Record<string, string> | undefined): void {
+  if (typeof document === "undefined") return;
+  const root = document.documentElement;
+  for (const k of appliedDesignTokenKeys) {
+    root.style.removeProperty(k);
+  }
+  appliedDesignTokenKeys = [];
+  if (!flat) return;
+  for (const [k, v] of Object.entries(flat)) {
+    if (!isDesignTokenVarKeyAllowed(k)) continue;
+    root.style.setProperty(k, v);
+    appliedDesignTokenKeys.push(k);
+  }
+}
+
 function semanticToCssVar(key: keyof SemanticTokens): string {
   return `--${key.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase()}`;
 }
@@ -35,22 +94,25 @@ export function applyTheme(theme: ThemeV1): void {
   const href = buildGoogleFontsHref(theme.fonts);
   if (href) upsertGoogleFontLink(href);
 
+  root.style.removeProperty("--jm-font-sans");
+  root.style.removeProperty("--jm-font-mono");
+
   if (theme.fonts?.sansStack) {
-    root.style.setProperty("--font-sans", theme.fonts.sansStack);
+    root.style.setProperty("--jm-font-sans", theme.fonts.sansStack);
   } else if (theme.fonts?.sansGoogle) {
     const name = theme.fonts.sansGoogle.replace(/\+/g, " ");
     root.style.setProperty(
-      "--font-sans",
+      "--jm-font-sans",
       `"${name}", ui-sans-serif, system-ui, sans-serif`
     );
   }
 
   if (theme.fonts?.monoStack) {
-    root.style.setProperty("--font-mono", theme.fonts.monoStack);
+    root.style.setProperty("--jm-font-mono", theme.fonts.monoStack);
   } else if (theme.fonts?.monoGoogle) {
     const name = theme.fonts.monoGoogle.replace(/\+/g, " ");
     root.style.setProperty(
-      "--font-mono",
+      "--jm-font-mono",
       `"${name}", ui-monospace, monospace`
     );
   }
@@ -59,6 +121,7 @@ export function applyTheme(theme: ThemeV1): void {
 /** Clear runtime theme overrides (fonts link + inline vars we set). */
 export function clearAppliedTheme(): void {
   if (typeof document === "undefined") return;
+  applyDesignTokenCssVars(undefined);
   removeGoogleFontLinks();
   const root = document.documentElement;
   const keys = Array.from(root.style);
@@ -74,7 +137,9 @@ export function clearAppliedTheme(): void {
       k.startsWith("--glass-") ||
       k.startsWith("--lane-") ||
       k === "--font-sans" ||
-      k === "--font-mono"
+      k === "--font-mono" ||
+      k === "--jm-font-sans" ||
+      k === "--jm-font-mono"
     ) {
       root.style.removeProperty(k);
     }

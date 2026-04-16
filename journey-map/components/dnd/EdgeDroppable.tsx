@@ -26,7 +26,8 @@ export function EdgeDroppable({ id, orientation, active, label }: Props) {
 
   const base =
     orientation === "vertical"
-      ? "self-stretch min-h-[72px] w-[64px]"
+      ? // Height comes from the flex parent (row stack beside the stages grid).
+        "shrink-0 self-stretch min-h-[72px] w-[64px]"
       : "h-[40px] w-full";
 
   return (

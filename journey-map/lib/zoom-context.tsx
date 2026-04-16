@@ -68,15 +68,29 @@ export function ZoomProvider({ children }: { children: React.ReactNode }) {
       viewport: { width: number; height: number },
       margin = 0.92
     ) => {
-      if (content.width <= 0 || content.height <= 0) return;
-      const fit = Math.min(
-        viewport.width / content.width,
-        viewport.height / content.height,
-        1
-      ) * margin;
+      const cw = content.width;
+      const ch = content.height;
+      const vw = viewport.width;
+      const vh = viewport.height;
+      if (
+        !Number.isFinite(cw) ||
+        !Number.isFinite(ch) ||
+        !Number.isFinite(vw) ||
+        !Number.isFinite(vh) ||
+        cw <= 0 ||
+        ch <= 0 ||
+        vw <= 0 ||
+        vh <= 0
+      ) {
+        return;
+      }
+      const fit = Math.min(vw / cw, vh / ch, 1) * margin;
+      if (!Number.isFinite(fit) || fit <= 0) return;
       const scale = clamp(fit, MIN_SCALE, MAX_SCALE);
-      const x = (viewport.width - content.width * scale) / 2;
-      const y = (viewport.height - content.height * scale) / 2;
+      if (!Number.isFinite(scale) || scale <= 0) return;
+      const x = (vw - cw * scale) / 2;
+      const y = (vh - ch * scale) / 2;
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return;
       setState({ scale, x, y });
     },
     []

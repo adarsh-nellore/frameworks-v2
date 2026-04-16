@@ -23,3 +23,12 @@ export const MODEL = "claude-sonnet-4-5";
 export function getAgentModel(): string {
   return process.env.AGENT_MODEL || MODEL;
 }
+
+/**
+ * Model for theme JSON normalization (override with THEME_NORMALIZE_MODEL).
+ * Default is Haiku 4.5 on the Anthropic API (`claude-haiku-4-5`). Do not use
+ * Bedrock-style IDs like `claude-3-5-haiku-20241022` here — they return 404 from api.anthropic.com.
+ */
+export function getThemeNormalizeModel(): string {
+  return process.env.THEME_NORMALIZE_MODEL || "claude-haiku-4-5";
+}

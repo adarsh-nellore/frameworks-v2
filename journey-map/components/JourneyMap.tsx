@@ -393,12 +393,11 @@ export function JourneyMap({
                   ))}
                 </SortableContext>
               </div>
-              <EdgeDroppable
-                id="__add-stage__"
-                orientation="vertical"
-                active={activeDrag?.kind === "card"}
-                label="+ stage"
-              />
+              {/* Reserve horizontal space so the + button stays aligned while the
+                  add-stage drop strip lives beside the row stack (full grid height). */}
+              {activeDrag?.kind === "card" ? (
+                <div className="shrink-0 mx-1 w-[64px] pointer-events-none" aria-hidden />
+              ) : null}
               <button
                 type="button"
                 onClick={onAddStage}
@@ -416,85 +415,94 @@ export function JourneyMap({
               items={rowIds}
               strategy={verticalListSortingStrategy}
             >
-              <div className="flex flex-col gap-6">
-              {map.rows.map((row) => (
-                <div
-                  key={row.id}
-                  className={[
-                    "flex items-stretch rounded-2xl transition-[background-color,box-shadow] duration-150",
-                    selection?.type === "row" && selection.id === row.id
-                      ? "bg-ink-primary/[0.07] ring-2 ring-ink-primary/35 ring-offset-2 ring-offset-surface shadow-sm"
-                      : "",
-                  ].join(" ")}
-                  data-row-shell
-                >
-                  <div className="shrink-0" style={{ width: LABEL_W }}>
-                    <RowLabel
-                      rowId={row.id}
-                      label={row.label}
-                      kind={row.kind}
-                      isSelected={
+              <div className="flex items-stretch">
+                <div className="flex min-w-0 flex-1 flex-col gap-6">
+                  {map.rows.map((row) => (
+                    <div
+                      key={row.id}
+                      className={[
+                        "flex items-stretch rounded-2xl transition-[background-color,box-shadow] duration-150",
                         selection?.type === "row" && selection.id === row.id
-                      }
-                      agentBusy={agentBusy}
-                      onClick={onRowClick}
-                      onLabelChange={onRowLabelChange}
-                    />
-                  </div>
-                  <div
-                    data-row-track
-                    data-row-id={row.id}
-                    className="relative flex items-stretch min-h-[180px] flex-1 py-5"
-                    style={{
-                      paddingLeft: GUTTER_W,
-                      paddingRight: GUTTER_W,
-                      gap: GUTTER_W,
-                    }}
-                  >
-                    {map.stages.map((stage, colIdx) => {
-                      const cell = cellsByPos[`${row.id}:${stage.id}`];
-                      if (!cell) {
-                        return (
-                          <EmptySlot
-                            key={`${row.id}:${stage.id}`}
-                            rowId={row.id}
-                            stageId={stage.id}
-                            agentBusy={agentBusy}
-                            onClick={onEmptySlotClick}
-                          />
-                        );
-                      }
-                      return (
-                        <Cell
-                          key={cell.id}
-                          cellId={cell.id}
+                          ? "bg-ink-primary/[0.07] ring-2 ring-ink-primary/35 ring-offset-2 ring-offset-surface shadow-sm"
+                          : "",
+                      ].join(" ")}
+                      data-row-shell
+                    >
+                      <div className="shrink-0" style={{ width: LABEL_W }}>
+                        <RowLabel
                           rowId={row.id}
-                          colIdx={colIdx}
-                          text={cell.text}
-                          num={cellNum[cell.id] ?? 0}
-                          rowKind={row.kind}
-                          isSelected={selectedBlockIds.has(cell.id)}
-                          isInDragGroup={
-                            activeDrag?.kind === "card" &&
-                            activeDrag.ids.includes(cell.id) &&
-                            activeDrag.anchorId !== cell.id
-                          }
-                          isRowSelected={
+                          label={row.label}
+                          kind={row.kind}
+                          isSelected={
                             selection?.type === "row" && selection.id === row.id
                           }
-                          isColumnSelected={
-                            selection?.type === "stages" &&
-                            selection.stageIds.includes(stage.id)
-                          }
                           agentBusy={agentBusy}
-                          onSelect={onCellSelect}
-                          onTextChange={onCellTextChange}
+                          onClick={onRowClick}
+                          onLabelChange={onRowLabelChange}
                         />
-                      );
-                    })}
-                  </div>
+                      </div>
+                      <div
+                        data-row-track
+                        data-row-id={row.id}
+                        className="relative flex min-h-[180px] flex-1 items-stretch py-5"
+                        style={{
+                          paddingLeft: GUTTER_W,
+                          paddingRight: GUTTER_W,
+                          gap: GUTTER_W,
+                        }}
+                      >
+                        {map.stages.map((stage, colIdx) => {
+                          const cell = cellsByPos[`${row.id}:${stage.id}`];
+                          if (!cell) {
+                            return (
+                              <EmptySlot
+                                key={`${row.id}:${stage.id}`}
+                                rowId={row.id}
+                                stageId={stage.id}
+                                agentBusy={agentBusy}
+                                onClick={onEmptySlotClick}
+                              />
+                            );
+                          }
+                          return (
+                            <Cell
+                              key={cell.id}
+                              cellId={cell.id}
+                              rowId={row.id}
+                              colIdx={colIdx}
+                              text={cell.text}
+                              num={cellNum[cell.id] ?? 0}
+                              rowKind={row.kind}
+                              isSelected={selectedBlockIds.has(cell.id)}
+                              isInDragGroup={
+                                activeDrag?.kind === "card" &&
+                                activeDrag.ids.includes(cell.id) &&
+                                activeDrag.anchorId !== cell.id
+                              }
+                              isRowSelected={
+                                selection?.type === "row" &&
+                                selection.id === row.id
+                              }
+                              isColumnSelected={
+                                selection?.type === "stages" &&
+                                selection.stageIds.includes(stage.id)
+                              }
+                              agentBusy={agentBusy}
+                              onSelect={onCellSelect}
+                              onTextChange={onCellTextChange}
+                            />
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ))}
+                <EdgeDroppable
+                  id="__add-stage__"
+                  orientation="vertical"
+                  active={activeDrag?.kind === "card"}
+                  label="+ stage"
+                />
               </div>
             </SortableContext>
 

@@ -1,9 +1,22 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
 import { Check, ClipboardCopy } from "lucide-react";
 import type { JourneyMap } from "@/lib/frameworks/journey-map/types";
-import { ThemeMenu } from "@/components/ThemeMenu";
+
+const ThemeMenu = dynamic(
+  () => import("@/components/ThemeMenu").then((m) => ({ default: m.ThemeMenu })),
+  {
+    ssr: false,
+    loading: () => (
+      <div
+        className="h-8 w-8 shrink-0 rounded-full bg-ink-primary/[0.06] animate-pulse"
+        aria-hidden
+      />
+    ),
+  }
+);
 
 type Props = {
   title: string;

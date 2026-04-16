@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   AnimatePresence,
   motion,
@@ -15,6 +15,8 @@ import type { Op } from "@/lib/frameworks/journey-map/ops";
 import { applyOps } from "@/lib/frameworks/journey-map/ops";
 import { renderCellText } from "@/lib/cell-text";
 import { kindTheme } from "@/lib/row-kind-theme";
+import { GeneratePanel } from "@/components/GeneratePanel";
+import type { GenerateEvent } from "@/lib/pipeline/events";
 
 type Props = {
   frameworkId: string;
@@ -25,11 +27,23 @@ type Props = {
   /** Current canvas selection sent as agent focus (optional on the wire). */
   focus: JourneyMapSelection | null;
   onFocusClear: () => void;
+  /** Bubble generation progress events up to the page so it can render the overlay. */
+  onGenerationProgress?: (event: GenerateEvent<JourneyMap> | null) => void;
+  /** Receive a cancel function whenever generation is in flight. */
+  registerGenerationCancel?: (cancel: (() => void) | null) => void;
 };
+
+type CopilotMode = "chat" | "generate";
 
 type ChatMsg =
   | { id: string; role: "user"; text: string }
-  | { id: string; role: "assistant"; text: string; opsCount: number }
+  | {
+      id: string;
+      role: "assistant";
+      text: string;
+      opsCount: number;
+      generated?: boolean;
+    }
   | { id: string; role: "error"; text: string; retryFor: string };
 
 let msgCounter = 0;
@@ -73,18 +87,44 @@ export function Copilot({
   onBusyChange,
   focus,
   onFocusClear,
+  onGenerationProgress,
+  registerGenerationCancel,
 }: Props) {
   const reduce = useReducedMotion();
   const [busy, setBusy] = useState(false);
   const [draft, setDraft] = useState("");
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [expanded, setExpanded] = useState(false);
+  const [mode, setMode] = useState<CopilotMode>("chat");
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   function setBusyBoth(v: boolean) {
     setBusy(v);
     onBusyChange?.(v);
+  }
+
+  function handleModeChange(next: CopilotMode) {
+    if (busy) return;
+    if (next === "generate") setExpanded(true);
+    if (next === "chat" && messages.length === 0) setExpanded(false);
+    setMode(next);
+  }
+
+  function handleGenerateSuccess(nextMap: JourneyMap, summary: string) {
+    onMapChange(nextMap);
+    setMode("chat");
+    setExpanded(true);
+    setMessages((m) => [
+      ...m,
+      {
+        id: nextId(),
+        role: "assistant",
+        text: summary,
+        opsCount: 0,
+        generated: true,
+      },
+    ]);
   }
 
   // Auto-scroll chat to bottom on new messages.
@@ -183,6 +223,38 @@ export function Copilot({
       ].join(" ")}
       style={{ maxHeight: expanded ? "min(56vh, 560px)" : "320px" }}
     >
+      {/* Mode toggle */}
+      <div className="flex items-center px-4 pt-3 pb-1.5 gap-1 border-b border-border-soft/50">
+        {(["chat", "generate"] as CopilotMode[]).map((m) => (
+          <button
+            key={m}
+            type="button"
+            onClick={() => handleModeChange(m)}
+            disabled={busy}
+            className={[
+              "px-2.5 py-1 rounded-md transition-colors",
+              "text-[10px] font-mono uppercase tracking-[0.18em]",
+              mode === m
+                ? "text-ink-primary bg-ink-primary/[0.07]"
+                : "text-ink-muted hover:text-ink-secondary",
+              busy ? "opacity-50 cursor-not-allowed" : "",
+            ].join(" ")}
+          >
+            {m}
+          </button>
+        ))}
+      </div>
+
+      {mode === "generate" ? (
+        <GeneratePanel
+          frameworkId={frameworkId}
+          onSuccess={handleGenerateSuccess}
+          onBusyChange={setBusyBoth}
+          onProgress={onGenerationProgress}
+          registerCancel={registerGenerationCancel}
+        />
+      ) : (
+        <Fragment>
       {/* Chat history (only when there's something to show) */}
       {(messages.length > 0 || busy) && (
         <div
@@ -210,7 +282,9 @@ export function Copilot({
                   <div className="max-w-[82%] rounded-2xl rounded-bl-md bg-white/80 border border-border-soft px-3.5 py-2 text-[13px] leading-snug text-ink-primary">
                     <div>{m.text}</div>
                     <div className="mt-1 font-mono text-[9px] tracking-widest uppercase text-ink-muted">
-                      {m.opsCount} {m.opsCount === 1 ? "op" : "ops"} applied
+                      {m.generated
+                        ? "Generated from sources"
+                        : `${m.opsCount} ${m.opsCount === 1 ? "op" : "ops"} applied`}
                     </div>
                   </div>
                 )}
@@ -440,6 +514,8 @@ export function Copilot({
           </button>
         </div>
       </form>
+        </Fragment>
+      )}
     </div>
   );
 }

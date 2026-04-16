@@ -1,4 +1,5 @@
 import { DEFAULT_LANES, DEFAULT_SEMANTIC, DEFAULT_THEME_V1 } from "./defaults";
+import { tryParseDesignTokenBundle } from "./import-design-tokens";
 import type { LaneTokenSet, SemanticTokens, ThemeV1 } from "./types";
 
 const RGB = /^\d{1,3} \d{1,3} \d{1,3}$/;
@@ -44,7 +45,7 @@ function parseSemantic(raw: unknown): SemanticTokens | null {
 }
 
 export type ParseResult =
-  | { ok: true; theme: ThemeV1 }
+  | { ok: true; theme: ThemeV1; designTokenCssVars?: Record<string, string> }
   | { ok: false; error: string };
 
 /** Validate and merge a partial or full theme JSON with shipped defaults. */
@@ -113,4 +114,13 @@ export function parseThemeV1(raw: unknown): ParseResult {
       fonts,
     },
   };
+}
+
+/** Accepts journey-map `theme.v1` or a grouped CSS token document (`tokens` → `--vars`). */
+export function parseThemeImport(raw: unknown): ParseResult {
+  const bundle = tryParseDesignTokenBundle(raw);
+  if (bundle) {
+    return { ok: true, theme: bundle.theme, designTokenCssVars: bundle.cssVars };
+  }
+  return parseThemeV1(raw);
 }

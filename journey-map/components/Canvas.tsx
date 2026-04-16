@@ -19,10 +19,17 @@ type Props = {
    * targets fall under this. Everything else is empty space → drag-to-pan.
    */
   interactiveSelector?: string;
+  /**
+   * When true, all canvas interaction is disabled — wheel, pan, and pointer
+   * events on empty space are no-ops. Used during long-running generation
+   * so the canvas can't be panned/zoomed while the agent pipeline runs.
+   * The Generation overlay sits above the canvas and provides its own UI.
+   */
+  locked?: boolean;
 };
 
 const DEFAULT_INTERACTIVE_SELECTOR =
-  "[data-block],[data-row],[data-stage],[data-empty-slot],[data-row-shell],[data-floating]";
+  "[data-block],[data-row],[data-stage],[data-empty-slot],[data-row-shell],[data-floating],[data-edge-zone]";
 
 /** How aggressively a wheel turns into zoom. Smaller = gentler. */
 const ZOOM_SENSITIVITY = 0.004;
@@ -32,6 +39,7 @@ const PAN_DAMPING = 0.9;
 export function Canvas({
   children,
   interactiveSelector = DEFAULT_INTERACTIVE_SELECTOR,
+  locked = false,
 }: Props) {
   const { x, y, scale, setPan, setScale, fitToContent } = useZoom();
   const outerRef = useRef<HTMLDivElement | null>(null);
@@ -43,9 +51,11 @@ export function Canvas({
   const xRef = useRef(x);
   const yRef = useRef(y);
   const scaleRef = useRef(scale);
+  const lockedRef = useRef(locked);
   xRef.current = x;
   yRef.current = y;
   scaleRef.current = scale;
+  lockedRef.current = locked;
 
   // Auto-fit content to viewport on mount.
   useLayoutEffect(() => {
@@ -55,12 +65,21 @@ export function Canvas({
     const id = requestAnimationFrame(() => {
       const cw = stage.scrollWidth;
       const ch = stage.scrollHeight;
-      if (!cw || !ch) return;
-      fitToContent(
-        { width: cw, height: ch },
-        { width: outer.clientWidth, height: outer.clientHeight },
-        0.86
-      );
+      const ow = outer.clientWidth;
+      const oh = outer.clientHeight;
+      if (
+        !Number.isFinite(cw) ||
+        !Number.isFinite(ch) ||
+        !Number.isFinite(ow) ||
+        !Number.isFinite(oh) ||
+        cw <= 0 ||
+        ch <= 0 ||
+        ow <= 0 ||
+        oh <= 0
+      ) {
+        return;
+      }
+      fitToContent({ width: cw, height: ch }, { width: ow, height: oh }, 0.86);
     });
     return () => cancelAnimationFrame(id);
   }, [fitToContent]);
@@ -75,6 +94,7 @@ export function Canvas({
     function onWheel(e: WheelEvent) {
       const outer = outerRef.current;
       if (!outer) return;
+      if (lockedRef.current) return; // locked → no preventDefault, no pan/zoom
       e.preventDefault();
 
       // Cmd/Ctrl + wheel → zoom, anchored at cursor.
@@ -113,6 +133,7 @@ export function Canvas({
 
   const handlePointerDown = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
+      if (locked) return;
       if (e.button !== 0 && e.pointerType !== "touch") return;
       const target = e.target as HTMLElement;
       if (target.closest(interactiveSelector)) return;
@@ -139,7 +160,7 @@ export function Canvas({
       window.addEventListener("pointerup", onUp);
       window.addEventListener("pointercancel", onUp);
     },
-    [interactiveSelector, setPan]
+    [interactiveSelector, setPan, locked]
   );
 
   return (

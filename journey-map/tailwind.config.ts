@@ -9,8 +9,17 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        sans: ["var(--font-sans)", "system-ui", "sans-serif"],
-        mono: ["var(--font-mono)", "ui-monospace", "monospace"],
+        // Theme overrides use --jm-font-* so we never clobber next/font's --font-sans / --font-mono on <html>.
+        sans: [
+          "var(--jm-font-sans, var(--font-sans))",
+          "system-ui",
+          "sans-serif",
+        ],
+        mono: [
+          "var(--jm-font-mono, var(--font-mono))",
+          "ui-monospace",
+          "monospace",
+        ],
       },
       colors: {
         canvas: "rgb(var(--canvas) / <alpha-value>)",

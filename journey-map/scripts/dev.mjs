@@ -18,11 +18,14 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(here, "..");
 const nextDir = path.resolve(projectRoot, ".next");
 
-// Guard against intermittent local dev asset 404s caused by stale build output.
-try {
-  rmSync(nextDir, { recursive: true, force: true });
-} catch {
-  // best-effort cleanup only
+// Full `.next` wipe is opt-in so `npm run dev` starts warm (faster, fewer HMR races).
+// If you see stale chunk 404s: CLEAN_NEXT=1 npm run dev
+if (process.env.CLEAN_NEXT === "1") {
+  try {
+    rmSync(nextDir, { recursive: true, force: true });
+  } catch {
+    // best-effort cleanup only
+  }
 }
 
 const nextBin = path.resolve(here, "..", "node_modules", ".bin", "next");
