@@ -1,0 +1,15 @@
+.DS_Store
+.claude/
+.cursor/
+
+# Local session / scratch files
+claudesesh*
+
+# journey-map (Next.js)
+journey-map/node_modules/
+journey-map/.next/
+journey-map/out/
+journey-map/.env*.local
+journey-map/*.log
+journey-map/next-env.d.ts
+journey-map/tsconfig.tsbuildinfo
