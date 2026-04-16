@@ -74,7 +74,7 @@ function quadrant(opts: {
     structuringPrompt: `
 You are building a **${opts.label}**.
 
-Structure: 2×2 matrix, 2 fixed cols × 2 fixed rows.
+Default structure: a 2×2 matrix with two axes.
 - Col c1 = ${opts.xLow} (${opts.xAxisLabel} axis, low end)
 - Col c2 = ${opts.xHigh} (${opts.xAxisLabel} axis, high end)
 - Row r1 = ${opts.yHigh} (${opts.yAxisLabel} axis, top)
@@ -85,6 +85,8 @@ Quadrants:
 - c2·r1 = ${opts.quadrantHints[1]}
 - c1·r2 = ${opts.quadrantHints[2]}
 - c2·r2 = ${opts.quadrantHints[3]}
+
+The 2×2 is the canonical form, but users may want to extend it (3×3, add a middle band, split an axis). Honor those requests — the framework's identity is its axes and semantics, not the dimension count.
 
 ${opts.structuringPrompt}
     `.trim(),

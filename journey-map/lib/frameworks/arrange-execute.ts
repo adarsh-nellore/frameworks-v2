@@ -85,7 +85,13 @@ export async function executeArrange(input: ExecuteArrangeInput): Promise<Execut
           cache_control: { type: "ephemeral" },
         },
       ],
-      tool_choice: { type: "auto" },
+      // Force a tool call. With `auto`, Claude can decide to respond with
+      // plain text when the user's instruction conflicts with the
+      // framework's structuring prompt (e.g. "make this 3×3" against a
+      // fixed 2×2 matrix), which surfaces as "Agent did not return a tool
+      // call". Forcing the tool makes the agent emit ops (possibly with a
+      // tiny summary explaining limits) rather than silently refusing.
+      tool_choice: { type: "tool", name: toolName },
       messages: [
         {
           role: "user",

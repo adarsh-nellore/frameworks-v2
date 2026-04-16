@@ -67,7 +67,7 @@ export const matrix2x2Config: FrameworkConfig = {
   structuringPrompt: `
 You are building a **2×2 Priority Matrix** — a 2-column × 2-row grid that maps items against two axes to surface prioritization decisions.
 
-**Fixed structure**: This framework always has exactly 2 cols and 2 rows. Do NOT add or remove cols/rows.
+**Canonical structure**: 2 cols × 2 rows. Honor this unless the user explicitly asks to extend (e.g. "make it 3×3", "add a middle band"); then allow addCol/addRow.
 
 **Col = X-axis**: The horizontal axis (e.g. Effort, Cost, Complexity).
 - c1 = Low (left column)

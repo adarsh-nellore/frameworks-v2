@@ -122,19 +122,47 @@ function CanvasPageInner() {
     return () => window.removeEventListener("resize", onResize);
   }, [fitAll]);
 
-  // Keyboard: Escape deactivates the current board (Miro/Figma parity —
-  // "click off" without actually clicking). Ignored when a text input is
-  // focused so we don't eat Escape in titles or copilot.
+  // Keyboard shortcuts at the workspace level.
+  //  - Escape deactivates the current board (Miro/Figma parity).
+  //  - Delete/Backspace removes selected cards from the active board.
+  // Skipped while a text input owns focus so we don't eat keystrokes.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key !== "Escape") return;
       const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA") return;
-      if (activeBoardId) setActiveBoardId(null);
+      const isContentEditable = (e.target as HTMLElement)?.isContentEditable;
+      if (tag === "INPUT" || tag === "TEXTAREA" || isContentEditable) return;
+
+      if (e.key === "Escape") {
+        if (activeBoardId) setActiveBoardId(null);
+        return;
+      }
+
+      if (e.key === "Delete" || e.key === "Backspace") {
+        if (!activeBoard || !activeFramework) return;
+        const sel = activeBoard.selection as
+          | { type: "cards"; ids: string[] }
+          | { type: "col"; id: string }
+          | { type: "row"; id: string }
+          | null;
+        if (!sel) return;
+        e.preventDefault();
+        type AnyOp = { op: string; [k: string]: unknown };
+        const ops: AnyOp[] =
+          sel.type === "cards"
+            ? sel.ids.map((id) => ({ op: "removeCard", cardId: id }))
+            : sel.type === "col"
+              ? [{ op: "removeCol", colId: sel.id }]
+              : [{ op: "removeRow", rowId: sel.id }];
+        const result = activeFramework.applyOps(activeBoard.map, ops as never);
+        if (result.ok) {
+          updateBoardMap(activeBoard.id, result.map);
+          setBoardSelection(activeBoard.id, null);
+        }
+      }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [activeBoardId, setActiveBoardId]);
+  }, [activeBoardId, activeBoard, activeFramework, setActiveBoardId, updateBoardMap, setBoardSelection]);
 
   // Apply stored theme/DS globally to the canvas root rather than per-board,
   // so every board on the workspace shares one visual language.

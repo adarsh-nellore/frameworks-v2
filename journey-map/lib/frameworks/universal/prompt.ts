@@ -82,6 +82,8 @@ A card may have sub-items — short bullets rendered nested under the parent. Us
 
 **Reshape boldly**: If the user's instruction implies the structure should change (add/remove cols or rows, rename to fit the new narrative), do it. Prefer minimal ops for tweaks; use structural ops when reshaping.
 
+**User intent overrides framework defaults.** Framework-specific prompts may describe a canonical shape ("2×2", "5 sections", etc.). Those are defaults, not hard rules. If the user explicitly asks to change the shape — "make this 3×3", "add a fifth phase", "turn this into a matrix" — do it. Emit the structural ops (addCol, addRow, etc.) the user asked for, even when the framework's convention is "fixed". A framework's value is in its labels and semantics, not its dimensions.
+
 ## Focus Handling
 
 When a selection focus is provided (specific cards, a col, or a row), scope your changes to that selection unless the instruction explicitly demands a broader rebuild.

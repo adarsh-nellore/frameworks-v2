@@ -334,7 +334,10 @@ export function GridCard({
               </div>
             ) : null}
 
-            {/* Inline remove — top-right; only renders on hover. Lucide X for clear semantics. */}
+            {/* Inline remove — always visible when the card is selected so
+                 users don't have to discover it via hover. On unselected
+                 cards, we still reveal it on hover so the card face stays
+                 clean at rest. */}
             {onRemove && !agentBusy && (
               <button
                 type="button"
@@ -342,8 +345,13 @@ export function GridCard({
                   e.stopPropagation();
                   onRemove(card.id);
                 }}
-                className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity rounded-md w-5 h-5 grid place-items-center text-ink-muted hover:text-rose-600 hover:bg-rose-50"
+                className={[
+                  "absolute top-2 right-2 rounded-md w-5 h-5 grid place-items-center",
+                  "text-ink-muted hover:text-rose-600 hover:bg-rose-50 transition-opacity",
+                  isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+                ].join(" ")}
                 aria-label="Remove card"
+                title="Remove card"
               >
                 <X className="h-3 w-3" />
               </button>
