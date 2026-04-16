@@ -43,7 +43,23 @@ export const proposeFrameworkToolSchema = {
       type: "string",
       enum: ["grid", "kanban", "matrix", "freeform"],
       description:
-        "grid = sparse 2D (both axes dynamic, e.g. journey map). kanban = 1-axis categorization (1 row, e.g. card sort). matrix = fixed NxM dense (both axes meaningful, e.g. 2x2 priority). freeform = Miro-style canvas where the user positions cards anywhere; pick this for mind maps, brainstorms, Double Diamond, Venn, or any spatial framework — use shape cards (cards with meta.shapeKind='diamond' | 'rectangle' | 'circle') to draw geometric outlines behind content cards.",
+        "grid = sparse 2D (both axes dynamic, e.g. journey map). kanban = 1-axis categorization (1 row), use with optional chrome for spatial frameworks like Double Diamond/Venn/Kano. matrix = fixed NxM dense (both axes meaningful, e.g. 2x2 priority). freeform = unstructured Miro-style canvas — only for mind maps / brainstorms, NOT for structured frameworks (those should be kanban+chrome).",
+    },
+    chrome: {
+      type: "object",
+      description:
+        "Optional decorative SVG chrome rendered behind the column headers. Use for spatial frameworks with tabular content: Double Diamond (chrome.kind='double-diamond'), Venn (circles=[labels]), Kano Model (kano-curve), conversion funnels (funnel), concentric ring models (concentric).",
+      required: ["kind"],
+      additionalProperties: true,
+      properties: {
+        kind: {
+          type: "string",
+          enum: ["double-diamond", "venn", "kano-curve", "funnel", "concentric"],
+        },
+        leftLabel: { type: "string" },
+        rightLabel: { type: "string" },
+        circles: { type: "array", items: { type: "string" } },
+      },
     },
     colNoun: { type: "string", maxLength: 20, description: "Singular noun for a column (e.g. 'Stage', 'Competitor', 'Quadrant')." },
     rowNoun: { type: "string", maxLength: 20, description: "Singular noun for a row (e.g. 'Lane', 'Criterion', 'Dimension')." },

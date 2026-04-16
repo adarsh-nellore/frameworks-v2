@@ -261,11 +261,24 @@ You are NOT writing framework content. The seed you return has empty cards. A se
 - **Mixed case**: if exactly one axis is fixed (e.g. RACI has a fixed set of 4 role cols but tasks grow over time), use \`grid\` and set ONLY the fixed axis's flag (\`fixedCols: true\` with dynamic rows, or vice versa). Do NOT use \`matrix\` — matrix requires BOTH axes fixed.
 
 **Pick \`freeform\` when**:
-- The framework has a SPATIAL shape that can't be captured as grid/kanban/matrix rows and columns. Overlapping regions, curved flows, irregular geometry.
-- Examples: Double Diamond (two diamonds side-by-side), Venn / Ikigai (overlapping circles), Kano Model (horizontal bands), concept mind-map, business motivation model, stakeholder concentric rings.
-- Freeform supports **shape cards**: at populate time, the agent emits cards with \`meta.shapeKind\` ∈ {\`"diamond"\`, \`"rectangle"\`, \`"circle"\`, \`"ellipse"\`} + \`meta.x/y\` + \`meta.shapeWidth/shapeHeight\` to draw editable background regions. Content cards then live at explicit \`(x, y)\` positions inside those regions. Your config doesn't include the shape cards (seed.cards is empty) — the populate step emits them.
-- Cols and rows still exist for freeform — use cols to tag the semantic regions (e.g. for Double Diamond: c1=Discover, c2=Define, c3=Develop, c4=Deliver). Use exactly one row ("All") or 2–3 card-type rows.
-- In the structuringPrompt, name the expected shape cards explicitly (e.g. "Two diamond shape cards labeled 'Discover → Define' and 'Develop → Deliver'") so the populate step knows what to draw.
+- The framework is a true unstructured canvas — a brainstorm, a mind map, a loose affinity wall, a free-positioned workspace.
+- Content is deliberately NOT tabular: cards relate to each other spatially rather than by a shared column/row structure.
+- Examples: mind map, brainstorm board, free affinity wall, sticky-note canvas.
+- **Do NOT pick freeform** for structured frameworks that have a recognizable tabular shape underneath (Double Diamond, Venn, Kano, SWOT, funnel, concentric rings). Those belong in kanban or matrix with \`chrome\` (see next section) — freeform content organization is chaotic at scale and looks worse than a clean tabular layout.
+
+## Chrome (decorative SVG over tabular layouts)
+
+For frameworks with a recognizable visual shape but tabular content, use a kanban (or matrix) layout plus \`chrome\`. Chrome is a named SVG banner rendered behind the column headers; it signals the framework's identity without interfering with card organization.
+
+Available chrome kinds (set via \`chrome: { kind: "<kind>", ... }\` on the config):
+
+- \`"double-diamond"\` — two rhombi for Problem Space → Solution Space. Use with 4 cols (Discover/Define/Develop/Deliver). Optional \`leftLabel\`, \`rightLabel\`.
+- \`"venn"\` — N overlapping circles behind the columns (one per col). Use with 2-5 cols, for Venn diagrams, Ikigai, set-intersection frameworks. Optional \`circles: string[]\` for labels per circle.
+- \`"kano-curve"\` — a rising-then-plateauing satisfaction curve. Use with 3 cols (Basics / Performance / Delighters).
+- \`"funnel"\` — trapezoidal wide-to-narrow shape. Use for conversion funnels, filtering pipelines.
+- \`"concentric"\` — nested circles. Use for onion models, stakeholder ring maps, maturity rings.
+
+Pick chrome when the framework's name evokes a shape. Skip chrome for regular tabular frameworks (SWOT, BCG, JTBD, journey map, etc.) — they don't need it.
 
 ## structuringPrompt guidance
 
@@ -285,15 +298,14 @@ If the user describes something unfamiliar, reason from first principles:
 3. **What is a card?** A finding, a stakeholder, a quote, a competitor, an action, an item? Pick the word that fits.
 4. **What's the nearest well-known analogue?** Adapt from that.
 
-## Non-grid frameworks
+## Non-grid frameworks — prefer chrome over freeform
 
-If the user asks for a spatial / overlapping / irregular structure, PREFER \`freeform\` over a grid approximation:
-
-- Venn diagram → freeform, cols are the sets, the populate step draws circle shape cards.
-- Double Diamond → freeform, cols = Discover/Define/Develop/Deliver, populate draws 2 diamond shape cards.
-- Mind map → freeform, cols are branches, no shape cards needed (cards cluster by col).
-- Kano Model → freeform, cols = Delighters/Performance/Basics, populate draws 3 band shape cards.
-- Concentric rings (onion model) → freeform, cols are layers, populate draws nested circle shape cards.
+- Venn diagram → kanban with \`chrome: { kind: "venn", circles: [labels] }\`. Cols = sets.
+- Double Diamond → kanban with \`chrome: { kind: "double-diamond" }\`. Cols = Discover/Define/Develop/Deliver.
+- Kano Model → kanban with \`chrome: { kind: "kano-curve" }\`. Cols = Basics/Performance/Delighters.
+- Conversion funnel → kanban with \`chrome: { kind: "funnel" }\`. Cols = funnel stages top-to-bottom.
+- Concentric rings (onion) → kanban with \`chrome: { kind: "concentric" }\`. Cols = rings inner-to-outer.
+- Mind map / brainstorm → freeform. No chrome; cards cluster by col tag.
 - Flowchart / timeline → grid with stages as cols, decision points as cards.
 - Radar chart → kanban with one col per dimension, scores as cardMetaFields.
 

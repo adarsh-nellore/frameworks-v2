@@ -42,6 +42,21 @@ export type FrameworkConfig = {
    */
   layout: "grid" | "kanban" | "matrix" | "freeform";
 
+  // ── Optional decorative chrome ──────────────────────────────────────────────
+  /**
+   * Visual chrome rendered behind/above the tabular column layout. Purely
+   * decorative — it signals the framework's identity (Double Diamond, Venn,
+   * Kano curve, etc.) without changing how cards are organized. Cards stay
+   * in their semantic cols × rows. Chrome scales with the table's geometry
+   * so any number of columns / cards works.
+   */
+  chrome?:
+    | { kind: "double-diamond"; leftLabel?: string; rightLabel?: string }
+    | { kind: "venn"; circles?: string[] }
+    | { kind: "kano-curve" }
+    | { kind: "funnel" }
+    | { kind: "concentric" };
+
   // ── Vocabulary (used in prompts and UI labels) ──────────────────────────────
   colNoun: string;   // "Stage" | "Section" | "Competitor" | "Theme"
   rowNoun: string;   // "Lane" | "Criterion" | "Card Type"

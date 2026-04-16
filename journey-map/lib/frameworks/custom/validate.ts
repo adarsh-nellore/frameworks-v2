@@ -129,6 +129,10 @@ export function validateFrameworkConfig(raw: unknown, existingIds: Iterable<stri
   const heroMetaFields = parseHeroMetaFields(src.heroMetaFields);
   if (heroMetaFields.error) return { ok: false, reason: heroMetaFields.error };
 
+  // ── chrome (optional) ───────────────────────────────────────────────────────
+  const chrome = parseChrome(src.chrome);
+  if (chrome.error) return { ok: false, reason: chrome.error };
+
   // ── seed ───────────────────────────────────────────────────────────────────
   const seedRes = validateSeed(src.seed, id, label);
   if (!seedRes.ok) return { ok: false, reason: `seed: ${seedRes.reason}` };
@@ -176,10 +180,39 @@ export function validateFrameworkConfig(raw: unknown, existingIds: Iterable<stri
       ...(heroMetaFields.value ? { heroMetaFields: heroMetaFields.value } : {}),
       ...(chatPlaceholder ? { chatPlaceholder } : {}),
       ...(chatSubtitle ? { chatSubtitle } : {}),
+      ...(chrome.value ? { chrome: chrome.value } : {}),
     };
 
     return { ok: true, config };
   }
+}
+
+function parseChrome(raw: unknown): { error?: string; value?: FrameworkConfig["chrome"] } {
+  if (raw === undefined || raw === null) return {};
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    return { error: "chrome must be an object" };
+  }
+  const c = raw as Record<string, unknown>;
+  const kind = c.kind;
+  if (kind === "double-diamond") {
+    return {
+      value: {
+        kind,
+        ...(typeof c.leftLabel === "string" ? { leftLabel: c.leftLabel } : {}),
+        ...(typeof c.rightLabel === "string" ? { rightLabel: c.rightLabel } : {}),
+      },
+    };
+  }
+  if (kind === "venn") {
+    const circles = Array.isArray(c.circles)
+      ? (c.circles.filter((x) => typeof x === "string") as string[])
+      : undefined;
+    return { value: { kind, ...(circles && circles.length ? { circles } : {}) } };
+  }
+  if (kind === "kano-curve" || kind === "funnel" || kind === "concentric") {
+    return { value: { kind } };
+  }
+  return { error: `chrome.kind must be one of "double-diamond" | "venn" | "kano-curve" | "funnel" | "concentric"` };
 }
 
 // Normalize a proposed framework id into the strict `custom-[a-z0-9-]{3,40}`

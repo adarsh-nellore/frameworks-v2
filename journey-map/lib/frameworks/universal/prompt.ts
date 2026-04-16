@@ -84,12 +84,29 @@ A card may have sub-items — short bullets rendered nested under the parent. Us
 
 **User intent overrides framework defaults.** Framework-specific prompts may describe a canonical shape ("2×2", "5 sections", etc.). Those are defaults, not hard rules. If the user explicitly asks to change the shape — "make this 3×3", "add a fifth phase", "turn this into a matrix" — do it. Emit the structural ops (addCol, addRow, etc.) the user asked for, even when the framework's convention is "fixed". A framework's value is in its labels and semantics, not its dimensions.
 
+## Decorative chrome (kanban / matrix layouts)
+
+Some frameworks have a recognizable visual identity (Double Diamond, Venn, Kano curve, funnel, concentric rings) but the content inside them is naturally tabular. For these, we use **chrome** — an SVG banner rendered behind the column headers — layered over the normal tabular layout. Cards live in columns; chrome signals the framework's shape.
+
+Chrome is set on \`config.chrome\` at framework-creation time, but the user can also rewrite it via \`setMapMeta\`:
+
+| User says | You emit |
+|---|---|
+| "Rename the left diamond to 'Research'" | \`setMapMeta\` key \`chromeLeftLabel\` value \`"Research"\` |
+| "Change the chrome to a Kano curve" | \`setMapMeta\` key \`chromeKind\` value \`"kano-curve"\` |
+| "Hide the chrome" | \`setMapMeta\` key \`chromeKind\` value \`"none"\` |
+| "Label the circles Economic / Social / Environmental" | \`setMapMeta\` key \`chromeCircles\` value \`"Economic|Social|Environmental"\` (pipe-separated) |
+
+Chrome rendering auto-adapts to the column count — don't hardcode dimensions in ops.
+
 ## Shape Cards (freeform layout only)
+
+Shape cards are ONLY for true freeform boards (mind maps, free brainstorms, sticky-note canvases) where the user is literally drawing a diagram. Do NOT use shape cards for structured frameworks like Double Diamond or Venn — those belong in kanban+chrome (see above).
 
 On **freeform** boards, cards can play two roles:
 
 - **Content cards** — regular text notes. Default.
-- **Shape cards** — cards with \`meta.shapeKind\` set. They render as editable geometric outlines BEHIND content cards and act as visual containers (Double Diamond's two diamonds, Ikigai's three circles, Kano's three bands, etc.).
+- **Shape cards** — cards with \`meta.shapeKind\` set. They render as editable geometric outlines BEHIND content cards and act as visual containers.
 
 ### Shape card meta keys
 - \`shapeKind\`: \`"diamond"\` | \`"rectangle"\` | \`"circle"\` | \`"ellipse"\`

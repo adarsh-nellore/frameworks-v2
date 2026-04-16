@@ -34,6 +34,7 @@ import { XAxisBand, YAxisBand } from "./grid/AxisSpine";
 import { SortableHandle } from "./grid/Sortable";
 import { SelectionToolbar } from "./grid/SelectionToolbar";
 import { FreeformLayout } from "./grid/FreeformLayout";
+import { ChromeLayer } from "./grid/ChromeLayer";
 
 type Props = {
   map: UniversalMap;
@@ -632,9 +633,26 @@ function KanbanLayout(p: LayoutProps) {
   const showRowGroups = map.rows.length > 1; // affinity (4 card-type rows) vs JTBD (single r0)
   const defaultRowId = map.rows[0]?.id ?? "r0";
   const colIds = map.cols.map((c) => c.id);
+  const totalWidth = map.cols.length * KANBAN_COL_W + (map.cols.length - 1) * GUTTER;
+  const hasChrome = !!config.chrome || !!map.meta?.chromeKind;
 
   return (
     <SortableContext items={colIds} strategy={horizontalListSortingStrategy}>
+      {hasChrome && (
+        <div className="mb-4">
+          <ChromeLayer
+            config={config}
+            metaOverrides={{
+              chromeKind: map.meta?.chromeKind,
+              chromeLeftLabel: map.meta?.chromeLeftLabel,
+              chromeRightLabel: map.meta?.chromeRightLabel,
+              chromeCircles: map.meta?.chromeCircles,
+            }}
+            totalWidth={totalWidth}
+            colCount={map.cols.length}
+          />
+        </div>
+      )}
       <div
         className="flex flex-nowrap items-start overflow-x-auto chat-scroll snap-x pb-3"
         style={{ gap: GUTTER }}

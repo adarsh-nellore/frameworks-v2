@@ -28,6 +28,11 @@ const BOARD_W = 1600;
 const BOARD_H = 1000;
 const CARD_W = 260;
 const CARD_H = 120;
+const GRID_SNAP = 24;
+
+function snap(n: number): number {
+  return Math.round(n / GRID_SNAP) * GRID_SNAP;
+}
 
 export type ShapeKind = "diamond" | "rectangle" | "circle" | "ellipse";
 
@@ -57,17 +62,17 @@ export function FreeformLayout({
 
   function commitPosition(cardId: string, x: number, y: number) {
     commitOps([
-      { op: "setCardMeta", cardId, key: "x", value: String(Math.round(x)) },
-      { op: "setCardMeta", cardId, key: "y", value: String(Math.round(y)) },
+      { op: "setCardMeta", cardId, key: "x", value: String(snap(x)) },
+      { op: "setCardMeta", cardId, key: "y", value: String(snap(y)) },
     ]);
   }
 
   function commitShape(cardId: string, x: number, y: number, width: number, height: number) {
     commitOps([
-      { op: "setCardMeta", cardId, key: "x", value: String(Math.round(x)) },
-      { op: "setCardMeta", cardId, key: "y", value: String(Math.round(y)) },
-      { op: "setCardMeta", cardId, key: "shapeWidth", value: String(Math.round(width)) },
-      { op: "setCardMeta", cardId, key: "shapeHeight", value: String(Math.round(height)) },
+      { op: "setCardMeta", cardId, key: "x", value: String(snap(x)) },
+      { op: "setCardMeta", cardId, key: "y", value: String(snap(y)) },
+      { op: "setCardMeta", cardId, key: "shapeWidth", value: String(snap(width)) },
+      { op: "setCardMeta", cardId, key: "shapeHeight", value: String(snap(height)) },
     ]);
   }
 

@@ -782,17 +782,18 @@ export const portersFiveForcesConfig = kanban({
   chatSubtitle: "Five forces of industry competition",
 });
 
-// Double Diamond — freeform board seeded with two diamond shape cards. The
-// shape cards act as editable background regions; content cards carry activity
-// notes inside them. The user can drag, resize, or delete the diamonds like
-// any other block.
+// Double Diamond — kanban layout with decorative diamond chrome above the
+// columns. Cards organize cleanly in phase columns; the two-diamond SVG sits
+// behind the column headers as a visual identity marker.
 export const doubleDiamondConfig: FrameworkConfig = {
   id: "double-diamond",
   label: "Double Diamond",
-  layout: "freeform",
+  layout: "kanban",
+  chrome: { kind: "double-diamond", leftLabel: "Problem Space", rightLabel: "Solution Space" },
   colNoun: "Phase",
   rowNoun: "Card",
   cardNoun: "Activity",
+  fixedCols: true,
   seed: {
     id: "template",
     title: "Double Diamond",
@@ -805,48 +806,49 @@ export const doubleDiamondConfig: FrameworkConfig = {
     ],
     rows: [{ id: "r1", label: "All", kind: "default" }],
     cards: [
-      // Two diamond shape cards as editable regions
-      { id: "s1", colId: "c1", rowId: "r1", text: "Discover → Define", order: 0,
-        meta: { shapeKind: "diamond", x: "80",  y: "120", shapeWidth: "560", shapeHeight: "420" } },
-      { id: "s2", colId: "c3", rowId: "r1", text: "Develop → Deliver", order: 1,
-        meta: { shapeKind: "diamond", x: "740", y: "120", shapeWidth: "560", shapeHeight: "420" } },
-      // Content cards — positioned inside the diamonds
-      { id: "k1", colId: "c1", rowId: "r1", text: "Customer interviews",     order: 2, meta: { x: "160", y: "260" } },
-      { id: "k2", colId: "c1", rowId: "r1", text: "Competitive teardown",    order: 3, meta: { x: "160", y: "360" } },
-      { id: "k3", colId: "c2", rowId: "r1", text: "How-might-we statements", order: 4, meta: { x: "430", y: "260" } },
-      { id: "k4", colId: "c2", rowId: "r1", text: "Priority user segments",  order: 5, meta: { x: "430", y: "360" } },
-      { id: "k5", colId: "c3", rowId: "r1", text: "Concept sketches",        order: 6, meta: { x: "820", y: "260" } },
-      { id: "k6", colId: "c3", rowId: "r1", text: "Rapid prototypes",        order: 7, meta: { x: "820", y: "360" } },
-      { id: "k7", colId: "c4", rowId: "r1", text: "Scoped MVP",              order: 8, meta: { x: "1090", y: "260" } },
-      { id: "k8", colId: "c4", rowId: "r1", text: "Launch checklist",        order: 9, meta: { x: "1090", y: "360" } },
+      { id: "k1", colId: "c1", rowId: "r1", text: "Customer interviews",     order: 0 },
+      { id: "k2", colId: "c1", rowId: "r1", text: "Competitive teardown",    order: 1 },
+      { id: "k3", colId: "c1", rowId: "r1", text: "Support-ticket trawl",    order: 2 },
+      { id: "k4", colId: "c2", rowId: "r1", text: "How-might-we statements", order: 0 },
+      { id: "k5", colId: "c2", rowId: "r1", text: "Priority user segments",  order: 1 },
+      { id: "k6", colId: "c3", rowId: "r1", text: "Concept sketches",  order: 0 },
+      { id: "k7", colId: "c3", rowId: "r1", text: "Rapid prototypes",  order: 1 },
+      { id: "k8", colId: "c3", rowId: "r1", text: "Low-fi user tests", order: 2 },
+      { id: "k9", colId: "c4", rowId: "r1", text: "Scoped MVP",        order: 0 },
+      { id: "k10", colId: "c4", rowId: "r1", text: "Launch checklist", order: 1 },
     ],
   },
   exampleInstructions: [
-    "Add two more discovery activities inside the left diamond",
-    "Propose three prototypes for Develop; position them inside the right diamond",
+    "Add discovery activities scheduled for the research sprint",
     "Tighten Define into two How-Might-We statements",
+    "Propose three prototypes for the Develop phase",
     "Identify what's missing before we can Deliver",
   ],
   chatPlaceholder: "Reshape the double diamond…",
   chatSubtitle: "Discover → Define → Develop → Deliver",
   structuringPrompt: `
-You are building a **Double Diamond** on a freeform canvas.
+You are building a **Double Diamond** — the UK Design Council process with two adjacent diamonds (Problem Space + Solution Space) rendered as decorative chrome above four phase columns.
 
-Two editable diamond **shape cards** (cards with meta.shapeKind="diamond") mark the two diamonds:
-- s1 spans Discover → Define (left).
-- s2 spans Develop → Deliver (right).
+- c1 = Discover (divergent research)
+- c2 = Define (convergent synthesis)
+- c3 = Develop (divergent ideation)
+- c4 = Deliver (convergent refinement)
 
-Content cards are activities or artifacts. Place each card inside the appropriate diamond by setting meta.x and meta.y within that diamond's bounding box. Aim for 3–6 content cards per diamond half (Discover, Define, Develop, Deliver). Use cols c1=Discover, c2=Define, c3=Develop, c4=Deliver to tag cards semantically even though freeform doesn't render them as columns.
+Cards are activities or artifacts in each phase. Favor 3–6 per phase. The chrome renders automatically; you don't need to emit shape cards. Users can retitle the chrome labels via setMapMeta with keys chromeLeftLabel / chromeRightLabel.
   `.trim(),
 };
 
-// Venn Diagram — three overlapping circle shape cards. Cards tagged by col
-// live in one or more circle regions. Users drag cards into overlapping
-// regions to express "this belongs to both X and Y".
+// Venn Diagram — kanban with decorative venn chrome. Cards live in the col
+// matching their primary set; overlap is expressed via the col kind/labels
+// the agent rewrites on demand (e.g. "A Only", "A + B", "All Three").
 export const vennDiagramConfig: FrameworkConfig = {
   id: "venn-diagram",
   label: "Venn Diagram",
-  layout: "freeform",
+  layout: "kanban",
+  chrome: {
+    kind: "venn",
+    circles: ["What you love", "What you're good at", "What the world needs"],
+  },
   colNoun: "Set",
   rowNoun: "Card",
   cardNoun: "Item",
@@ -855,84 +857,78 @@ export const vennDiagramConfig: FrameworkConfig = {
     title: "Ikigai — Venn",
     meta: {},
     cols: [
-      { id: "c1", label: "What you love",     kind: "theme" },
+      { id: "c1", label: "What you love", kind: "theme" },
       { id: "c2", label: "What you're good at", kind: "theme" },
       { id: "c3", label: "What the world needs", kind: "theme" },
     ],
     rows: [{ id: "r1", label: "All", kind: "default" }],
     cards: [
-      { id: "s1", colId: "c1", rowId: "r1", text: "What you love",         order: 0,
-        meta: { shapeKind: "circle", x: "160", y: "180", shapeWidth: "440", shapeHeight: "440" } },
-      { id: "s2", colId: "c2", rowId: "r1", text: "What you're good at",   order: 1,
-        meta: { shapeKind: "circle", x: "500", y: "180", shapeWidth: "440", shapeHeight: "440" } },
-      { id: "s3", colId: "c3", rowId: "r1", text: "What the world needs",  order: 2,
-        meta: { shapeKind: "circle", x: "330", y: "420", shapeWidth: "440", shapeHeight: "440" } },
-      { id: "k1", colId: "c1", rowId: "r1", text: "Writing narrative essays", order: 3, meta: { x: "220", y: "280" } },
-      { id: "k2", colId: "c2", rowId: "r1", text: "Visual design systems",    order: 4, meta: { x: "700", y: "280" } },
-      { id: "k3", colId: "c3", rowId: "r1", text: "Teaching beginners",       order: 5, meta: { x: "420", y: "700" } },
-      { id: "k4", colId: "c1", rowId: "r1", text: "**Explaining** complex ideas clearly", order: 6, meta: { x: "460", y: "360" } },
+      { id: "k1", colId: "c1", rowId: "r1", text: "Writing narrative essays", order: 0 },
+      { id: "k2", colId: "c2", rowId: "r1", text: "Visual design systems",    order: 0 },
+      { id: "k3", colId: "c3", rowId: "r1", text: "Teaching beginners",       order: 0 },
     ],
   },
   exampleInstructions: [
-    "Add a 4th circle 'What you can be paid for' and populate the overlaps",
-    "List 5 items for each lone region",
-    "Find the three things that sit in all three circles",
-    "Move 'teaching beginners' to the overlap between What-you-love and What-the-world-needs",
+    "Add a 4th set 'What you can be paid for' (Ikigai complete)",
+    "List 5 items for each set",
+    "Add a card 'Explaining complex ideas clearly' to 'What you love'",
+    "Rename the third circle to 'Market demand'",
   ],
   chatPlaceholder: "Reshape the venn diagram…",
   chatSubtitle: "Overlapping sets · Ikigai-style",
   structuringPrompt: `
-You are building a **Venn Diagram** on a freeform canvas using circle shape cards.
+You are building a **Venn Diagram** rendered as a tabular kanban with decorative venn chrome above.
 
-Each "set" is a circle shape card (cards with meta.shapeKind="circle"). Content cards are items, placed by meta.x/meta.y within one circle, at the overlap of two circles, or at the center overlap of all circles. Use the col id to tag each content card with its primary set (if it's in one circle only) — for overlap items, pick the most "core" col.
+Each col is a set. Cards are items belonging primarily to that set. If an item belongs to multiple sets (an overlap), add it to the most core set's column and note the overlap in the card text (e.g. "**Teaching**  ⟷ shared with 'What the world needs'"). Chrome circle labels come from config.chrome.circles or can be rewritten via setMapMeta with key chromeCircles (pipe-separated list, e.g. "A|B|C").
 
-Typical layout: 3 circles arranged in a triangle so that every pair overlaps and all three meet at the center. Respect this geometry when setting shape x/y/width/height so overlaps read cleanly.
+Favor 3–6 cards per set.
   `.trim(),
 };
 
-// Kano Model — two diagonal rectangle shape cards marking the "delighter" and
-// "basic need" bands on a satisfaction × functionality chart.
+// Kano Model — kanban with kano-curve chrome above. Three zones (Basics →
+// Performance → Delighters) map to columns; the rising satisfaction curve
+// renders as chrome behind them.
 export const kanoModelConfig: FrameworkConfig = {
   id: "kano-model",
   label: "Kano Model",
-  layout: "freeform",
-  colNoun: "Band",
+  layout: "kanban",
+  chrome: { kind: "kano-curve" },
+  colNoun: "Zone",
   rowNoun: "Card",
   cardNoun: "Feature",
+  fixedCols: true,
   seed: {
     id: "template",
     title: "Kano Model",
-    meta: { xAxisLabel: "Functionality →", yAxisLabel: "Satisfaction ↑" },
+    meta: {},
     cols: [
-      { id: "c1", label: "Delighters",  kind: "theme" },
+      { id: "c1", label: "Basics",      kind: "pain_points" },
       { id: "c2", label: "Performance", kind: "metrics" },
-      { id: "c3", label: "Basics",      kind: "pain_points" },
+      { id: "c3", label: "Delighters",  kind: "theme" },
     ],
     rows: [{ id: "r1", label: "All", kind: "default" }],
     cards: [
-      { id: "s1", colId: "c1", rowId: "r1", text: "Delighter band",   order: 0,
-        meta: { shapeKind: "ellipse", x: "140", y: "100", shapeWidth: "700", shapeHeight: "220" } },
-      { id: "s2", colId: "c2", rowId: "r1", text: "Performance band", order: 1,
-        meta: { shapeKind: "rectangle", x: "140", y: "360", shapeWidth: "700", shapeHeight: "160" } },
-      { id: "s3", colId: "c3", rowId: "r1", text: "Basics (must-haves)", order: 2,
-        meta: { shapeKind: "rectangle", x: "140", y: "560", shapeWidth: "700", shapeHeight: "180" } },
-      { id: "k1", colId: "c1", rowId: "r1", text: "Instant-replay onboarding tour",  order: 3, meta: { x: "230", y: "180" } },
-      { id: "k2", colId: "c2", rowId: "r1", text: "Dashboard loads < 800ms",         order: 4, meta: { x: "230", y: "420" } },
-      { id: "k3", colId: "c3", rowId: "r1", text: "SSO login with SAML",             order: 5, meta: { x: "230", y: "620" } },
+      { id: "k1", colId: "c1", rowId: "r1", text: "SSO login with SAML",             order: 0 },
+      { id: "k2", colId: "c2", rowId: "r1", text: "Dashboard loads < 800ms",         order: 0 },
+      { id: "k3", colId: "c3", rowId: "r1", text: "Instant-replay onboarding tour",  order: 0 },
     ],
   },
   exampleInstructions: [
-    "Add 3 more features to the Delighter band from our roadmap",
+    "Add 3 more features to the Delighter zone from our roadmap",
     "Demote any 'Delighter' that has become table stakes to Basics",
     "Order Performance features by customer impact",
     "Flag any Basic feature we haven't shipped yet",
   ],
   chatPlaceholder: "Reshape the kano model…",
-  chatSubtitle: "Delighter / Performance / Basic bands",
+  chatSubtitle: "Basics / Performance / Delighters",
   structuringPrompt: `
-You are building a **Kano Model** on a freeform canvas.
+You are building a **Kano Model** rendered as a tabular kanban with a rising satisfaction-curve chrome above.
 
-Three horizontal band shape cards (ellipse on top for Delighters, then two rectangles for Performance and Basics) visually organize features by customer-satisfaction curve. Content cards are features; place each inside the correct band by setting meta.x/meta.y. Keep bands stacked top-to-bottom: Delighters (surprise & delight) → Performance (linear satisfaction) → Basics (must-haves).
+- c1 = Basics (must-haves — absence causes dissatisfaction, presence doesn't delight)
+- c2 = Performance (linear — more is better)
+- c3 = Delighters (surprise & delight — absence is fine, presence is outsized)
+
+Cards are features. Aim for 3–6 per zone.
   `.trim(),
 };
 
