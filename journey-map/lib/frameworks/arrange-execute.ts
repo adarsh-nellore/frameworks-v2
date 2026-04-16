@@ -69,11 +69,17 @@ export async function executeArrange(input: ExecuteArrangeInput): Promise<Execut
 
   try {
     const anthropic = getAnthropic();
+    // Two-call retry strategy:
+    //   1. Extended thinking + tool_choice: "auto" — best quality, but the
+    //      model can decline to emit a tool call if the user's request looks
+    //      to conflict with the framework's structuringPrompt.
+    //   2. If the first call returns no tool_use, fall back to forced
+    //      tool_choice (type: "tool") WITHOUT thinking — Anthropic rejects
+    //      forced tool_choice + thinking combined, so we drop thinking here.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const createParams: any = {
+    const basePayload: any = {
       model: getAgentModel(),
       max_tokens: 12000,
-      thinking: { type: "enabled", budget_tokens: 6000 },
       system: [
         { type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } },
       ],
@@ -85,13 +91,6 @@ export async function executeArrange(input: ExecuteArrangeInput): Promise<Execut
           cache_control: { type: "ephemeral" },
         },
       ],
-      // Force a tool call. With `auto`, Claude can decide to respond with
-      // plain text when the user's instruction conflicts with the
-      // framework's structuring prompt (e.g. "make this 3×3" against a
-      // fixed 2×2 matrix), which surfaces as "Agent did not return a tool
-      // call". Forcing the tool makes the agent emit ops (possibly with a
-      // tiny summary explaining limits) rather than silently refusing.
-      tool_choice: { type: "tool", name: toolName },
       messages: [
         {
           role: "user",
@@ -104,9 +103,23 @@ export async function executeArrange(input: ExecuteArrangeInput): Promise<Execut
         },
       ],
     };
-    const msg = await anthropic.messages.create(createParams);
 
-    const tool = msg.content.find((c) => c.type === "tool_use");
+    let msg = await anthropic.messages.create({
+      ...basePayload,
+      thinking: { type: "enabled", budget_tokens: 6000 },
+      tool_choice: { type: "auto" },
+    });
+    let tool = msg.content.find((c) => c.type === "tool_use");
+
+    if (!tool || tool.type !== "tool_use") {
+      // Fallback: force tool use, drop thinking (API constraint).
+      msg = await anthropic.messages.create({
+        ...basePayload,
+        tool_choice: { type: "tool", name: toolName },
+      });
+      tool = msg.content.find((c) => c.type === "tool_use");
+    }
+
     if (!tool || tool.type !== "tool_use") {
       return { ok: false, error: "Agent did not return a tool call" };
     }
