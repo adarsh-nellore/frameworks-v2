@@ -1,45 +1,47 @@
 import type { ComponentType } from "react";
+import type { UniversalMap } from "./universal/types";
+import type { Op } from "./universal/ops";
+import type { FrameworkConfig } from "./universal/config";
 
-// Generic shape for a framework module.
-// TMap is the framework's map type (e.g., JourneyMap).
-// TOp is the framework's op union (e.g., journey-map's Op).
-export type FrameworkModule<TMap, TOp> = {
+// ---------------------------------------------------------------------------
+// All frameworks now share one schema (UniversalMap), one op set (Op), and
+// one tool (apply_operations). The FrameworkModule is just a thin wrapper
+// that pairs a config with the universal renderer + reducer.
+// ---------------------------------------------------------------------------
+
+export type FrameworkModule = {
+  // Identity
   id: string;
   label: string;
-  seed: TMap;
+  config: FrameworkConfig;
+  seed: UniversalMap;
 
-  // Agent
-  systemPrompt: string;
-  toolName: string;
-  toolDescription: string;
-  toolSchema: object;
-  renderUserPayload: (map: TMap, instruction: string, focus?: unknown) => string;
-
-  // Reducer + validation
+  // Reducer (delegated to universal/applyOps)
   applyOps: (
-    map: TMap,
-    ops: TOp[]
+    map: UniversalMap,
+    ops: Op[]
   ) =>
-    | { ok: true; map: TMap }
+    | { ok: true; map: UniversalMap }
     | { ok: false; reason: string; failedAtIndex: number };
+
   validateMap: (m: unknown) =>
-    | { ok: true; map: TMap }
+    | { ok: true; map: UniversalMap }
     | { ok: false; reason: string };
+
   validateOpShape: (op: unknown) => boolean;
 
-  // Render (selection is framework-specific agent/canvas focus; use `unknown` in registry.)
+  // Renderer
   Component: ComponentType<{
-    map: TMap;
-    onChange: (next: TMap) => void;
+    map: UniversalMap;
+    onChange: (next: UniversalMap) => void;
     busy?: boolean;
     selection: unknown;
     onSelectionChange: (next: unknown) => void;
   }>;
 
-  // Toolbar chips
+  // Toolbar suggestion pills
   exampleInstructions: string[];
 };
 
-// Type-erased variant for the registry.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type AnyFrameworkModule = FrameworkModule<any, any>;
+// Type-erased alias kept for backward compatibility with existing code.
+export type AnyFrameworkModule = FrameworkModule;

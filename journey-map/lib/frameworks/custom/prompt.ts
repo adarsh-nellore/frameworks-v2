@@ -1,0 +1,298 @@
+import type { FrameworkConfig } from "../universal/config";
+import {
+  journeyMapConfig,
+  matrix2x2Config,
+  competitiveMapConfig,
+  jtbdCanvasConfig,
+  affinityDiagramConfig,
+} from "../universal";
+
+// ──────────────────────────────────────────────────────────────────────────────
+// System prompt for the propose_framework tool.
+//
+// Strategy: the LLM already knows thousands of frameworks (SWOT, RACI, Porter's,
+// Kano, Ansoff, BCG, Ikigai, Value Prop, 5 Whys, Empathy, Service Blueprint…).
+// We don't need to teach the domain. We need to teach the OUTPUT SHAPE — what
+// a FrameworkConfig looks like — and give the model a decision rubric for
+// picking a layout + dimensions + structuringPrompt style.
+//
+// The few-shots are SHAPE-spanning (not domain-spanning): they cover every
+// layout × every constraint combo × a range of col/row counts and optional
+// fields. Live configs are serialized at module-load time so they can't drift.
+// Three synthetic few-shots are added for variety: SWOT, Card Sort, Stakeholder
+// Map. These live inside this file to keep the prompt self-contained.
+// ──────────────────────────────────────────────────────────────────────────────
+
+// Strip universal-op references from a structuringPrompt before serializing it
+// as a few-shot. The live configs (journey-map, matrix-2x2, ...) predate this
+// constraint and mention setMapMeta / addRow by name in places; if we copy
+// them verbatim, the agent patterns after that leak and the validator rejects
+// the resulting config. We replace those instructions with neutral language.
+function stripOpMentions(prompt: string): string {
+  return prompt
+    // "Use setMapMeta with key X to set Y" → "Record X via the Y hero field"
+    .replace(
+      /Use\s+`?setMapMeta`?\s+with\s+keys?\s+([^.]+?)\s+to\s+([^.]+)\./gi,
+      "Record $2 in the hero meta field(s) $1."
+    )
+    // Generic mentions: "use `addCard`" / "via `moveRow`" → drop the op, keep the noun
+    .replace(
+      /\b(use|via|with)\s+`?(addCard|addCol|addRow|removeCard|removeCol|removeRow|renameCol|renameRow|moveCard|moveCol|moveRow|editCard|reparentCard|setCardMeta|setMapMeta)`?\s*/gi,
+      "$1 the corresponding action "
+    )
+    // Final safety net: if any bare op name survives, replace with neutral token.
+    .replace(
+      /\b(addCard|addCol|addRow|removeCard|removeCol|removeRow|renameCol|renameRow|moveCard|moveCol|moveRow|editCard|reparentCard|setCardMeta|setMapMeta)\b/g,
+      "the relevant operation"
+    );
+}
+
+// Trim a live config down to just the shape the LLM needs to copy.
+// Drops bulky seed.cards so we don't waste tokens on example content.
+function serializeFewShot(cfg: FrameworkConfig): unknown {
+  return {
+    id: cfg.id.startsWith("custom-") ? cfg.id : `custom-${cfg.id}`,
+    label: cfg.label,
+    layout: cfg.layout,
+    colNoun: cfg.colNoun,
+    rowNoun: cfg.rowNoun,
+    cardNoun: cfg.cardNoun,
+    ...(cfg.fixedCols ? { fixedCols: true } : {}),
+    ...(cfg.fixedRows ? { fixedRows: true } : {}),
+    ...(cfg.cardMetaFields ? { cardMetaFields: cfg.cardMetaFields } : {}),
+    ...(cfg.heroMetaFields ? { heroMetaFields: cfg.heroMetaFields } : {}),
+    ...(cfg.chatPlaceholder ? { chatPlaceholder: cfg.chatPlaceholder } : {}),
+    ...(cfg.chatSubtitle ? { chatSubtitle: cfg.chatSubtitle } : {}),
+    structuringPrompt: stripOpMentions(cfg.structuringPrompt),
+    exampleInstructions: cfg.exampleInstructions.slice(0, 3),
+    seed: {
+      id: `${cfg.id}-seed`,
+      title: cfg.seed.title,
+      meta: {},
+      cols: cfg.seed.cols.map((c) => ({
+        id: c.id,
+        label: c.label,
+        ...(c.kind ? { kind: c.kind } : {}),
+      })),
+      rows: cfg.seed.rows.map((r) => ({
+        id: r.id,
+        label: r.label,
+        ...(r.kind ? { kind: r.kind } : {}),
+      })),
+      cards: [],
+    },
+  };
+}
+
+// Three synthetic few-shots covering common patterns the live configs don't hit.
+const SWOT_SHOT: unknown = {
+  id: "custom-swot-analysis",
+  label: "SWOT Analysis",
+  layout: "matrix",
+  colNoun: "Origin",
+  rowNoun: "Valence",
+  cardNoun: "Finding",
+  fixedCols: true,
+  fixedRows: true,
+  heroMetaFields: [
+    { key: "subject", label: "Subject", placeholder: "What are we analyzing? (a team, product, strategy…)" },
+  ],
+  structuringPrompt:
+    "A SWOT analysis maps findings across two binary axes. Col = origin (Internal vs External). Row = valence (Helpful vs Harmful). Each cell holds a distinct group of findings: Strengths (Internal/Helpful), Weaknesses (Internal/Harmful), Opportunities (External/Helpful), Threats (External/Harmful). Cards are short, concrete observations — one insight per card. Use the Subject hero field to record what is being analyzed.",
+  exampleInstructions: [
+    "Add three strengths about our brand recognition",
+    "List the top external threats from new entrants",
+    "Move 'team is small' from Strengths to Weaknesses",
+  ],
+  chatPlaceholder: "Refine the SWOT…",
+  chatSubtitle: "Mapping findings across internal/external and helpful/harmful",
+  seed: {
+    id: "custom-swot-analysis-seed",
+    title: "SWOT Analysis",
+    meta: {},
+    cols: [
+      { id: "c1", label: "Internal", kind: "quadrant_low" },
+      { id: "c2", label: "External", kind: "quadrant_high" },
+    ],
+    rows: [
+      { id: "r1", label: "Helpful", kind: "quadrant_high" },
+      { id: "r2", label: "Harmful", kind: "quadrant_low" },
+    ],
+    cards: [],
+  },
+};
+
+const CARD_SORT_SHOT: unknown = {
+  id: "custom-card-sort",
+  label: "Card Sort",
+  layout: "kanban",
+  colNoun: "Category",
+  rowNoun: "Items",
+  cardNoun: "Card",
+  fixedRows: true,
+  structuringPrompt:
+    "A card sort groups items into a small number of categories. Col = category (typically 3–7 named groups plus an 'Ungrouped' catchall). Row = a single implicit bucket (all items share one logical plane). Cards are the items being sorted — keep them short and concrete. Start with a few seed categories plus 'Ungrouped' so the user can move cards in.",
+  exampleInstructions: [
+    "Add three items under 'Navigation' from the research notes",
+    "Move the unclassified items into 'Content'",
+    "Rename 'Misc' to 'Support'",
+  ],
+  chatPlaceholder: "Rearrange the sort…",
+  chatSubtitle: "Grouping items into named categories",
+  seed: {
+    id: "custom-card-sort-seed",
+    title: "Card Sort",
+    meta: {},
+    cols: [
+      { id: "c1", label: "Ungrouped", kind: "ungrouped" },
+      { id: "c2", label: "Category A", kind: "theme" },
+      { id: "c3", label: "Category B", kind: "theme" },
+      { id: "c4", label: "Category C", kind: "theme" },
+    ],
+    rows: [{ id: "r1", label: "Items" }],
+    cards: [],
+  },
+};
+
+const STAKEHOLDER_MAP_SHOT: unknown = {
+  id: "custom-stakeholder-map",
+  label: "Stakeholder Map",
+  layout: "matrix",
+  colNoun: "Influence",
+  rowNoun: "Interest",
+  cardNoun: "Stakeholder",
+  fixedCols: true,
+  fixedRows: true,
+  heroMetaFields: [
+    { key: "xAxisLabel", label: "X Axis", placeholder: "Influence (Low → High)" },
+    { key: "yAxisLabel", label: "Y Axis", placeholder: "Interest (Low → High)" },
+  ],
+  cardMetaFields: [
+    {
+      key: "role",
+      label: "Role",
+      type: "select",
+      options: ["executive", "operator", "customer", "partner", "regulator"],
+      nullable: true,
+    },
+  ],
+  structuringPrompt:
+    "A stakeholder map places people or groups on a 2×2 by their influence over an initiative (x-axis) and their interest in the outcome (y-axis). The four quadrants suggest an engagement strategy: High/High = manage closely; High/Low = keep satisfied; Low/High = keep informed; Low/Low = monitor. Cards are individual stakeholders; use the Role meta field to tag how they're positioned.",
+  exampleInstructions: [
+    "Add our CFO and their peers to High Influence / High Interest",
+    "Move 'Legal team' down to Low Interest now that the policy is settled",
+    "Tag all customer stakeholders with role=customer",
+  ],
+  chatPlaceholder: "Place stakeholders on the map…",
+  chatSubtitle: "Mapping people by influence and interest",
+  seed: {
+    id: "custom-stakeholder-map-seed",
+    title: "Stakeholder Map",
+    meta: {},
+    cols: [
+      { id: "c1", label: "Low Influence", kind: "quadrant_low" },
+      { id: "c2", label: "High Influence", kind: "quadrant_high" },
+    ],
+    rows: [
+      { id: "r1", label: "High Interest", kind: "quadrant_high" },
+      { id: "r2", label: "Low Interest", kind: "quadrant_low" },
+    ],
+    cards: [],
+  },
+};
+
+// Assembled list: 5 live configs (span every layout + constraint combo) + 3 synthetics.
+function fewShots(): unknown[] {
+  return [
+    serializeFewShot(journeyMapConfig),       // grid, both axes dynamic
+    serializeFewShot(matrix2x2Config),        // matrix, fixedCols + fixedRows
+    serializeFewShot(competitiveMapConfig),   // matrix, dynamic (rare but valid)
+    serializeFewShot(jtbdCanvasConfig),       // kanban, 1 row, dynamic cols
+    serializeFewShot(affinityDiagramConfig),  // kanban with explicit row groupings
+    SWOT_SHOT,
+    CARD_SORT_SHOT,
+    STAKEHOLDER_MAP_SHOT,
+  ];
+}
+
+export function buildDescribeSystemPrompt(): string {
+  const shots = fewShots()
+    .map((s, i) => `Example ${i + 1}:\n${JSON.stringify(s, null, 2)}`)
+    .join("\n\n---\n\n");
+
+  return `
+You are a framework architect. Your job: given a short natural-language description of a framework the user wants, return a valid FrameworkConfig object via the propose_framework tool. The framework will be rendered by a universal grid system — every framework is cols × rows → cards, with three layout flavors (grid / kanban / matrix).
+
+You are NOT writing framework content. The seed you return has empty cards. A separate step will populate the seed with realistic example content after your config is validated.
+
+## Output contract (field-by-field)
+
+- **id**: kebab-case slug starting with "custom-" (e.g. "custom-swot-analysis"). 3–40 chars after the prefix.
+- **label**: display name, ≤40 chars, capitalized naturally (e.g. "SWOT Analysis").
+- **layout**: one of \`"grid" | "kanban" | "matrix"\` — see decision rules below.
+- **colNoun / rowNoun / cardNoun**: singular labels used in UI buttons and agent prompts. ≤20 chars each. Examples: "Stage" / "Lane" / "Card", "Competitor" / "Criterion" / "Assessment", "Quadrant" / "Quadrant" / "Item".
+- **fixedCols / fixedRows**: set to \`true\` when the structure should be locked (the "Add column" affordance disappears). See layout rules.
+- **structuringPrompt**: 3–6 sentences explaining what col, row, and card MEAN in this framework. This text is appended to the universal system prompt whenever the agent works on this framework. DO NOT mention universal ops like addCard, moveRow, setCardMeta — the universal prompt already explains those. Focus on semantics: "Col = X", "Row = Y", "Card = Z", any fixed interpretations of specific quadrants, optional meta fields.
+- **exampleInstructions**: 2–5 short suggestion pills shown in the copilot UI. Each is a concrete, framework-appropriate action the user might ask the agent to do (e.g. "Add three competitors to the Low Price / High Quality quadrant").
+- **chatPlaceholder / chatSubtitle**: optional UI copy.
+- **cardMetaFields**: optional per-card select fields that render as cycling buttons on every card. Use sparingly — only when a taxonomy would genuinely help the user.
+- **heroMetaFields**: optional top-level text fields rendered as a banner above the grid. Use for axis labels on matrix layouts, personas, subject lines, etc.
+- **seed**: \`{ id, title, meta: {}, cols: [...], rows: [...], cards: [] }\`. Col ids MUST be \`c1, c2, c3, …\` in order. Row ids MUST be \`r1, r2, r3, …\` in order. Cards MUST be empty.
+
+## Layout decision rules
+
+**Pick \`matrix\` when**:
+- The framework is defined by TWO semantic axes (x and y each mean something).
+- Dimensions are small and fixed (typically 2×2; up to ~5×5 for things like competitive maps).
+- Examples: SWOT, 2×2 priority, Eisenhower, BCG Matrix, Kano, Ansoff, Impact/Effort, Risk Matrix, Stakeholder Map.
+- Required: set \`fixedCols: true\` AND \`fixedRows: true\`. At least 2 cols AND 2 rows. Consider heroMetaFields for axis labels.
+
+**Pick \`kanban\` when**:
+- The framework has ONE meaningful axis (categories) and cards are sorted into those categories.
+- There is no meaningful second axis — everything shares one logical plane.
+- Examples: card sort, JTBD sections, affinity themes, empathy map sections, MoSCoW bucketing.
+- Required: exactly 1 row (\`rows: [{ id: "r1", label: "Items" }]\` or similar), \`fixedRows: true\`. Cols can be fixed or dynamic.
+
+**Pick \`grid\` when**:
+- Both axes are meaningful AND at least one is dynamic (the user adds more as they work).
+- The map is sparse OR semi-dense — not every (col, row) cell must be populated.
+- Examples: journey map, service blueprint, user story map, RACI matrix (fixed cols = R/A/C/I, dynamic rows = tasks), most timeline-by-lens frameworks.
+- Both \`fixedCols\` and \`fixedRows\` typically false.
+- **Mixed case**: if exactly one axis is fixed (e.g. RACI has a fixed set of 4 role cols but tasks grow over time), use \`grid\` and set ONLY the fixed axis's flag (\`fixedCols: true\` with dynamic rows, or vice versa). Do NOT use \`matrix\` — matrix requires BOTH axes fixed.
+
+## structuringPrompt guidance
+
+- 3–6 sentences. Concrete and specific to THIS framework.
+- Tell the agent what each axis means semantically.
+- If there are fixed cells with canonical names (e.g. SWOT's 4 quadrants), enumerate them.
+- If there are row "kinds" (semantic tags like "actions", "pain_points") that theme the cards, mention them.
+- Mention any hero meta fields and what they hold.
+- Never mention op names. Never include pseudocode.
+
+## Design rubric (for novel frameworks the examples don't cover)
+
+If the user describes something unfamiliar, reason from first principles:
+
+1. **One axis or two?** If everything naturally sorts into a single set of named buckets → kanban. If there's a conceptual X and Y → matrix or grid.
+2. **Fixed or dynamic?** If the framework has a canonical number of cells (2×2, a fixed set of named stages) → fixed. If the user adds more as they work → dynamic.
+3. **What is a card?** A finding, a stakeholder, a quote, a competitor, an action, an item? Pick the word that fits.
+4. **What's the nearest well-known analogue?** Adapt from that.
+
+## Fallback for non-grid frameworks
+
+If the user asks for a structure that doesn't fit (radar chart, mind map, flowchart, Venn diagram, hierarchical tree, timeline as continuous axis), pick the closest grid approximation and make the approximation explicit in the structuringPrompt:
+
+- Radar chart → kanban with one col per dimension, scores as cardMetaFields.
+- Mind map → grid with central theme in col 1, branches as cols 2+, notes as cards.
+- Flowchart → grid with stages as cols, decision points as cards, sequential order implied.
+- Timeline → grid with time-period cols.
+
+## Examples of valid output (shape reference)
+
+${shots}
+
+## Output
+
+Call the \`propose_framework\` tool with your config. The id must start with "custom-". Do NOT return free-form text — the tool call is the only output channel.
+  `.trim();
+}
