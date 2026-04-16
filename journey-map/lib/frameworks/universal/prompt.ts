@@ -91,15 +91,34 @@ On **freeform** boards, cards can play two roles:
 - **Content cards** — regular text notes. Default.
 - **Shape cards** — cards with \`meta.shapeKind\` set. They render as editable geometric outlines BEHIND content cards and act as visual containers (Double Diamond's two diamonds, Ikigai's three circles, Kano's three bands, etc.).
 
-To create a shape card, emit \`addCard\` with meta that includes:
-- \`shapeKind\`: one of \`"diamond"\`, \`"rectangle"\`, \`"circle"\`, \`"ellipse"\`
-- \`x\`, \`y\`: pixel coords of the top-left of the shape's bounding box
+### Shape card meta keys
+- \`shapeKind\`: \`"diamond"\` | \`"rectangle"\` | \`"circle"\` | \`"ellipse"\`
+- \`x\`, \`y\`: pixel coords of the top-left of the bounding box
 - \`shapeWidth\`, \`shapeHeight\`: bounding box size in pixels
-- The card's \`text\` becomes the shape's label.
+- The card's \`text\` is the shape's label (shown above the shape, editable inline).
 
-To nest content cards inside a shape, set their \`meta.x\`/\`meta.y\` so they fall within the shape's bounding box. Shapes and content cards share the same coordinate space.
+### Creating shape cards
+Emit \`addCard\` with \`meta.shapeKind\` set plus x/y/shapeWidth/shapeHeight. Choose a \`colId\` that captures the semantic region (e.g. for Double Diamond: c1=Discover, c3=Develop).
 
-When reshaping a user's spatial framework, prefer adjusting shape card size/position over creating new shapes. Users can also drag, resize, and delete shapes directly.
+### Editing shape cards — FOLLOW USER INTENT LITERALLY
+When the user asks to edit shapes, use these op patterns. The user's intent takes precedence — don't refuse or reinterpret structural changes.
+
+| User says | You emit |
+|---|---|
+| "Make the left diamond bigger" | \`setCardMeta\` with key \`shapeWidth\` (and/or \`shapeHeight\`) to a larger value on that shape card |
+| "Move the diamonds further apart" | \`setCardMeta\` with key \`x\` on each shape card, increasing the gap |
+| "Change the left diamond to a circle" | \`setCardMeta\` with key \`shapeKind\` value \`"circle"\` on that shape card |
+| "Add a third diamond" | \`addCard\` with \`meta.shapeKind="diamond"\` at an appropriate x/y |
+| "Remove the Solution Space diamond" | \`removeCard\` with that shape card's id |
+| "Rename the left diamond to 'Problem'" | \`editCard\` with the new text on that shape card |
+| "Align the diamonds in a row" | \`setCardMeta\` with \`y\` set to the same value on each shape card |
+| "Overlap the circles more" | \`setCardMeta\` with \`x\` decreased (or increased) on specific circles so their bboxes overlap |
+| "Make it a Venn" | Add circle shape cards (2 or 3), remove existing non-circle shapes, reposition so they overlap |
+
+When the user reshapes shapes, ALSO reposition the content cards inside them so they stay within the new bounding boxes. The user should see their content follow the geometry, not get orphaned.
+
+### Coordinate space
+Canvas is ~1600×1000 by default. Shape-card bounding boxes typically 300–700px; content cards are 260px wide. Keep shapes within the board and leave 30+ pixels of padding between adjacent shape bboxes unless the user specifically wants overlap (Venn).
 
 ## Focus Handling
 
