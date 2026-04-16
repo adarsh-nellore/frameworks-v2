@@ -75,13 +75,18 @@ export function validateFrameworkConfig(raw: unknown, existingIds: Iterable<stri
   const chatSubtitle = optTruncString(src.chatSubtitle, MAX_CHAT_HINT);
 
   // ── layout ─────────────────────────────────────────────────────────────────
-  if (src.layout !== "grid" && src.layout !== "kanban" && src.layout !== "matrix") {
+  if (
+    src.layout !== "grid" &&
+    src.layout !== "kanban" &&
+    src.layout !== "matrix" &&
+    src.layout !== "freeform"
+  ) {
     return {
       ok: false,
-      reason: `layout must be one of "grid" | "kanban" | "matrix" (got "${String(src.layout)}")`,
+      reason: `layout must be one of "grid" | "kanban" | "matrix" | "freeform" (got "${String(src.layout)}")`,
     };
   }
-  const layout = src.layout as "grid" | "kanban" | "matrix";
+  const layout = src.layout as "grid" | "kanban" | "matrix" | "freeform";
 
   // ── structuringPrompt: length + no op-name leak ────────────────────────────
   // Truncate long prompts (the agent tends to be verbose) rather than rejecting
@@ -143,15 +148,16 @@ export function validateFrameworkConfig(raw: unknown, existingIds: Iterable<stri
     // coerce to grid rather than rejecting — the user doesn't care which
     // renderer we use, they want their framework.
     if (seed.rows.length !== 1) {
-      // Fall through: treat as grid. effectiveFixedRows stays as-requested.
       return buildResult("grid");
     }
     effectiveFixedRows = true;
+  } else if (layout === "freeform") {
+    // Freeform coexists with any cols/rows shape; no structural constraint.
   }
 
   return buildResult(layout);
 
-  function buildResult(effectiveLayout: "grid" | "kanban" | "matrix"): Result {
+  function buildResult(effectiveLayout: "grid" | "kanban" | "matrix" | "freeform"): Result {
 
     // ── Assemble ─────────────────────────────────────────────────────────────
     const config: FrameworkConfig = {

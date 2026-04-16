@@ -877,6 +877,52 @@ export const scamperConfig = kanban({
 });
 
 // ────────────────────────────────────────────────────────────────────────────
+// FREEFORM — Miro-style canvas with user-positioned cards
+// ────────────────────────────────────────────────────────────────────────────
+
+export const freeformCanvasConfig: FrameworkConfig = {
+  id: "freeform-canvas",
+  label: "Freeform Canvas",
+  layout: "freeform",
+  colNoun: "Cluster",
+  rowNoun: "Category",
+  cardNoun: "Note",
+  seed: {
+    id: "template",
+    title: "Freeform Canvas",
+    meta: {},
+    // A handful of starter clusters so the "+" chips in the top-left give
+    // users a sense of how cluster-tagging works on a freeform board.
+    cols: [
+      { id: "c1", label: "Ideas", kind: "theme" },
+      { id: "c2", label: "Questions", kind: "pain_points" },
+      { id: "c3", label: "Decisions", kind: "actions" },
+    ],
+    rows: [{ id: "r1", label: "All", kind: "default" }],
+    cards: [
+      { id: "k1", colId: "c1", rowId: "r1", text: "Drag cards anywhere. Tag them by cluster for AI context.", order: 0, meta: { x: "160", y: "220" } },
+      { id: "k2", colId: "c2", rowId: "r1", text: "Double-click any card to edit.", order: 1, meta: { x: "480", y: "220" } },
+      { id: "k3", colId: "c3", rowId: "r1", text: "Click a cluster chip (top-left) to add a card to that group.", order: 2, meta: { x: "800", y: "220" } },
+    ],
+  },
+  exampleInstructions: [
+    "Add five Ideas clustered on the left, five Questions on the right",
+    "Rename 'Decisions' to 'Next steps'",
+    "Merge any duplicate notes across clusters",
+    "Group related cards into new clusters",
+  ],
+  chatPlaceholder: "Reshape the canvas…",
+  chatSubtitle: "Free-positioned notes grouped by cluster",
+  structuringPrompt: `
+You are building a **Freeform Canvas** — a Miro-style board where cards can live anywhere.
+
+Cards each carry optional \`meta.x\` and \`meta.y\` pixel coordinates. If you omit them, the UI will auto-flow the card into a loose grid; that's fine. Cluster cards by \`colId\` — cols act as topical buckets (Ideas, Questions, Decisions, etc.). There is always one row ("All"); keep it.
+
+Focus on generating content; let the user position cards themselves. When asked to "organize" cards, rename or consolidate clusters rather than setting explicit x/y.
+  `.trim(),
+};
+
+// ────────────────────────────────────────────────────────────────────────────
 // Catalog export — single array for easy registration.
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -906,4 +952,6 @@ export const catalogConfigs: FrameworkConfig[] = [
   nowNextLaterConfig,
   hypothesisBoardConfig,
   scamperConfig,
+  // Freeform
+  freeformCanvasConfig,
 ];

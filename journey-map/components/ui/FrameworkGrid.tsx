@@ -33,6 +33,7 @@ import { AddSlotButton } from "./grid/AddSlotButton";
 import { XAxisBand, YAxisBand } from "./grid/AxisSpine";
 import { SortableHandle } from "./grid/Sortable";
 import { SelectionToolbar } from "./grid/SelectionToolbar";
+import { FreeformLayout } from "./grid/FreeformLayout";
 
 type Props = {
   map: UniversalMap;
@@ -327,6 +328,18 @@ export function FrameworkGrid({
         {config.layout === "grid" && <GridLayout {...shared} />}
         {config.layout === "kanban" && <KanbanLayout {...shared} />}
         {config.layout === "matrix" && <MatrixLayout {...shared} />}
+        {config.layout === "freeform" && (
+          <FreeformLayout
+            map={map}
+            config={config}
+            agentBusy={agentBusy}
+            selectedCardIds={selectedCardIds}
+            onCardSelect={selectCard}
+            onEditCard={editCard}
+            onRemoveCard={removeCard}
+            commitOps={commitOps}
+          />
+        )}
       </div>
 
       {/* Floating action bar for batch ops on multi-card selection */}

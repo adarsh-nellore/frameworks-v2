@@ -27,11 +27,16 @@ export type FrameworkConfig = {
   // ── Layout ─────────────────────────────────────────────────────────────────
   /**
    * How the grid renders:
-   * - "grid"   = sparse 2D grid (journey map): row labels left, col headers top
-   * - "kanban" = vertical card stacks per col (JTBD, affinity): no left label column
-   * - "matrix" = dense fixed NxM grid (2x2, competitive map): both axes labelled
+   * - "grid"     = sparse 2D grid (journey map): row labels left, col headers top
+   * - "kanban"   = vertical card stacks per col (JTBD, affinity): no left label column
+   * - "matrix"   = dense fixed NxM grid (2x2, competitive map): both axes labelled
+   * - "freeform" = Miro-style canvas: cards positioned by (x, y) on the board.
+   *                Position is stored in card.meta.x / card.meta.y as stringified
+   *                pixel coordinates. cols/rows still exist (used for grouping
+   *                cards into semantic clusters + tool ops), but are rendered as
+   *                soft labels, not grid lines.
    */
-  layout: "grid" | "kanban" | "matrix";
+  layout: "grid" | "kanban" | "matrix" | "freeform";
 
   // ── Vocabulary (used in prompts and UI labels) ──────────────────────────────
   colNoun: string;   // "Stage" | "Section" | "Competitor" | "Theme"
