@@ -29,9 +29,10 @@ export const proposeFrameworkToolSchema = {
   properties: {
     id: {
       type: "string",
-      pattern: "^custom-[a-z0-9-]{3,40}$",
+      minLength: 3,
+      maxLength: 80,
       description:
-        "Kebab-case slug, must start with 'custom-' (e.g. 'custom-swot-analysis').",
+        "Kebab-case slug, preferably starting with 'custom-' (e.g. 'custom-swot-analysis'). The server will normalize to lowercase, strip invalid chars, and prepend 'custom-' if missing, so don't fail on this field.",
     },
     label: {
       type: "string",

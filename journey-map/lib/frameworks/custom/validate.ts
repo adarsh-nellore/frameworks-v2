@@ -47,20 +47,23 @@ export function validateFrameworkConfig(raw: unknown, existingIds: Iterable<stri
     }
   }
 
-  // ── id: enforce pattern, then auto-suffix on collision ─────────────────────
-  if (typeof src.id !== "string" || !ID_PATTERN.test(src.id)) {
+  // ── id: normalize (repair), then auto-suffix on collision ─────────────────
+  // The agent sometimes returns ids with uppercase letters, URLs, or trailing
+  // dots (e.g. when the user's description includes a URL). Rather than reject,
+  // we normalize to the strict form and only bail if nothing usable remains.
+  const normalizedId = normalizeFrameworkId(src.id);
+  if (!normalizedId || !ID_PATTERN.test(normalizedId)) {
     return {
       ok: false,
-      reason: `id must match ${ID_PATTERN} (got "${String(src.id)}")`,
+      reason: `id could not be normalized to match ${ID_PATTERN} (got "${String(src.id)}")`,
     };
   }
   const existing = new Set(existingIds);
-  let id = src.id;
+  let id = normalizedId;
   if (existing.has(id)) {
-    // Suffix -2, -3, ... until free.
     let n = 2;
     while (existing.has(`${id}-${n}`) && n < 1000) n++;
-    id = `${id}-${n}`.slice(0, 48); // keep total length bounded
+    id = `${id}-${n}`.slice(0, 48);
   }
 
   // ── label, nouns, optional chat hints ──────────────────────────────────────
@@ -136,33 +139,60 @@ export function validateFrameworkConfig(raw: unknown, existingIds: Iterable<stri
       return { ok: false, reason: 'matrix layout requires at least 2 cols and 2 rows' };
     }
   } else if (layout === "kanban") {
-    // Kanban is single-row by convention; force fixedRows true and require 1 row.
-    effectiveFixedRows = true;
+    // Kanban is single-row by convention. If the agent proposed multiple rows,
+    // coerce to grid rather than rejecting — the user doesn't care which
+    // renderer we use, they want their framework.
     if (seed.rows.length !== 1) {
-      return { ok: false, reason: 'kanban layout requires exactly 1 row (one axis of categories)' };
+      // Fall through: treat as grid. effectiveFixedRows stays as-requested.
+      return buildResult("grid");
     }
+    effectiveFixedRows = true;
   }
 
-  // ── Assemble ───────────────────────────────────────────────────────────────
-  const config: FrameworkConfig = {
-    id,
-    label,
-    layout,
-    colNoun,
-    rowNoun,
-    cardNoun,
-    seed,
-    structuringPrompt,
-    exampleInstructions,
-    ...(fixedCols ? { fixedCols: true } : {}),
-    ...(effectiveFixedRows ? { fixedRows: true } : {}),
-    ...(cardMetaFields.value ? { cardMetaFields: cardMetaFields.value } : {}),
-    ...(heroMetaFields.value ? { heroMetaFields: heroMetaFields.value } : {}),
-    ...(chatPlaceholder ? { chatPlaceholder } : {}),
-    ...(chatSubtitle ? { chatSubtitle } : {}),
-  };
+  return buildResult(layout);
 
-  return { ok: true, config };
+  function buildResult(effectiveLayout: "grid" | "kanban" | "matrix"): Result {
+
+    // ── Assemble ─────────────────────────────────────────────────────────────
+    const config: FrameworkConfig = {
+      id,
+      label,
+      layout: effectiveLayout,
+      colNoun,
+      rowNoun,
+      cardNoun,
+      seed,
+      structuringPrompt,
+      exampleInstructions,
+      ...(fixedCols ? { fixedCols: true } : {}),
+      ...(effectiveFixedRows ? { fixedRows: true } : {}),
+      ...(cardMetaFields.value ? { cardMetaFields: cardMetaFields.value } : {}),
+      ...(heroMetaFields.value ? { heroMetaFields: heroMetaFields.value } : {}),
+      ...(chatPlaceholder ? { chatPlaceholder } : {}),
+      ...(chatSubtitle ? { chatSubtitle } : {}),
+    };
+
+    return { ok: true, config };
+  }
+}
+
+// Normalize a proposed framework id into the strict `custom-[a-z0-9-]{3,40}`
+// form. Returns the normalized id or an empty string if nothing usable is left.
+function normalizeFrameworkId(raw: unknown): string {
+  if (typeof raw !== "string") return "";
+  let s = raw.trim().toLowerCase();
+  // Replace any non-allowed char with a hyphen. This drops URLs, dots,
+  // underscores, unicode, etc. and leaves dashes/letters/digits intact.
+  s = s.replace(/[^a-z0-9-]/g, "-");
+  // Collapse consecutive hyphens and trim leading/trailing.
+  s = s.replace(/-+/g, "-").replace(/^-+|-+$/g, "");
+  if (!s) return "";
+  // Ensure "custom-" prefix.
+  if (!s.startsWith("custom-")) s = `custom-${s}`;
+  // Truncate the part AFTER "custom-" to 40 chars to satisfy ID_PATTERN.
+  const body = s.slice("custom-".length);
+  const trimmedBody = body.slice(0, 40).replace(/-+$/g, "");
+  return `custom-${trimmedBody}`;
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
