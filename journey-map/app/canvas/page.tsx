@@ -51,6 +51,7 @@ function CanvasPageInner() {
     duplicateBoard,
     updateBoardMap,
     updateBoardTitle,
+    moveBoard,
     setBoardSelection,
     setActiveBoardId,
     pending,
@@ -249,6 +250,7 @@ function CanvasPageInner() {
               onSelectionChange={(sel) => setBoardSelection(board.id, sel)}
               onDelete={() => removeBoard(board.id)}
               onDuplicate={() => duplicateBoard(board.id)}
+              onMove={(x, y) => moveBoard(board.id, x, y)}
               locked={
                 generationActive ||
                 (pending?.boardId === board.id && !pending?.error) ||
@@ -338,6 +340,27 @@ function CanvasPageInner() {
             registerGenerationCancel={registerCancel}
           />
         </>
+      )}
+
+      {/* Helpful hint when the workspace has boards but none is active.
+          Miro/Figma-style: nothing is broken, but the copilot is hidden until
+          the user selects a board to work on. */}
+      {!activeBoard && boards.length > 0 && (
+        <div
+          data-floating
+          className="fixed top-5 left-1/2 -translate-x-1/2 z-30 glass rounded-full px-3 py-1.5 text-[12px] text-ink-secondary"
+        >
+          Click a board to edit it, or
+          <button
+            type="button"
+            onClick={() => {
+              if (boards[0]) setActiveBoardId(boards[0].id);
+            }}
+            className="ml-1 text-ink-primary font-medium hover:underline"
+          >
+            focus the first one
+          </button>
+        </div>
       )}
 
       <ZoomControls onFit={fitAll} />

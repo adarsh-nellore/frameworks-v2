@@ -1,11 +1,12 @@
 "use client";
 
-import { MoreHorizontal, Trash2, Copy } from "lucide-react";
+import { MoreHorizontal, Trash2, Copy, GripHorizontal } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { Board } from "@/lib/canvas/types";
 import type { AnyFrameworkModule } from "@/lib/frameworks";
 import type { UniversalMap, UniversalSelection } from "@/lib/frameworks/universal/types";
 import { PendingBoardSkeleton } from "@/components/PendingBoardSkeleton";
+import { useZoom } from "@/lib/zoom-context";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // BoardFrame — positioned wrapper around one Board on the canvas.
@@ -29,6 +30,7 @@ export type BoardFrameProps = {
   onSelectionChange: (sel: UniversalSelection | null) => void;
   onDelete?: () => void;
   onDuplicate?: () => void;
+  onMove?: (x: number, y: number) => void;
   /** If true, disables interactive editing (e.g. during generation). */
   locked?: boolean;
 };
@@ -44,12 +46,15 @@ export function BoardFrame({
   onSelectionChange,
   onDelete,
   onDuplicate,
+  onMove,
   locked = false,
 }: BoardFrameProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [titleDraft, setTitleDraft] = useState(board.title);
   const [titleFocused, setTitleFocused] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const { getScale } = useZoom();
 
   useEffect(() => {
     if (!titleFocused) setTitleDraft(board.title);
@@ -87,12 +92,58 @@ export function BoardFrame({
         top: board.y,
       }}
     >
-      {/* Header chrome — title + per-board menu. Positioned above the board
-          content so drag-to-reposition (Phase 4) can grip here. */}
+      {/* Header chrome — drag handle + title + per-board menu. The grip
+          initiates a drag; clicks elsewhere in the header focus the title or
+          open the menu. */}
       <div
         data-board-header
-        className="absolute -top-8 left-0 right-0 flex items-center justify-between gap-2 px-1"
+        className={[
+          "absolute -top-8 left-0 right-0 flex items-center gap-1 px-1",
+          isDragging ? "cursor-grabbing" : "",
+        ].join(" ")}
       >
+        {onMove && !busy && (
+          <button
+            type="button"
+            data-floating
+            aria-label="Drag to reposition"
+            onPointerDown={(e) => {
+              if (e.button !== 0 && e.pointerType !== "touch") return;
+              e.preventDefault();
+              e.stopPropagation();
+              const startClientX = e.clientX;
+              const startClientY = e.clientY;
+              const startX = board.x;
+              const startY = board.y;
+              setIsDragging(true);
+              onActivate();
+              const onPointerMove = (ev: PointerEvent) => {
+                const scale = getScale() || 1;
+                const dx = (ev.clientX - startClientX) / scale;
+                const dy = (ev.clientY - startClientY) / scale;
+                onMove(startX + dx, startY + dy);
+              };
+              const onPointerUp = () => {
+                setIsDragging(false);
+                window.removeEventListener("pointermove", onPointerMove);
+                window.removeEventListener("pointerup", onPointerUp);
+                window.removeEventListener("pointercancel", onPointerUp);
+              };
+              window.addEventListener("pointermove", onPointerMove);
+              window.addEventListener("pointerup", onPointerUp);
+              window.addEventListener("pointercancel", onPointerUp);
+            }}
+            className={[
+              "inline-flex items-center justify-center h-6 w-6 rounded-md shrink-0",
+              "text-ink-muted hover:text-ink-primary hover:bg-ink-primary/[0.06]",
+              "transition-colors",
+              isDragging ? "cursor-grabbing" : "cursor-grab",
+            ].join(" ")}
+            title="Drag to reposition"
+          >
+            <GripHorizontal className="h-3.5 w-3.5" />
+          </button>
+        )}
         <input
           type="text"
           value={titleDraft}
@@ -116,7 +167,7 @@ export function BoardFrame({
           }}
           disabled={busy}
           className={[
-            "bg-transparent outline-none truncate max-w-[60%] min-w-0",
+            "bg-transparent outline-none truncate min-w-0 flex-1",
             "text-[12px] font-medium text-ink-secondary hover:text-ink-primary",
             "focus:text-ink-primary",
             "px-2 py-1 rounded-md",
@@ -125,7 +176,7 @@ export function BoardFrame({
           aria-label="Board title"
         />
 
-        <div ref={menuRef} className="relative" data-floating>
+        <div ref={menuRef} className="relative shrink-0" data-floating>
           <button
             type="button"
             onClick={(e) => {
