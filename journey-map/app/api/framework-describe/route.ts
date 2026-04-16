@@ -225,6 +225,24 @@ ${sourceContext}
   if (config.layout === "kanban") {
     return base + "Each column should hold 3–7 cards. If the framework naturally has sub-items (e.g. checklist items under a goal, quotes under a theme), use sub-items via addCard with parentCardId for the nested detail.";
   }
+  if (config.layout === "freeform") {
+    return (
+      base +
+      `
+**This is a freeform spatial framework.** Before populating content cards, decide whether the framework's shape implies background geometry. Most named spatial frameworks do — examples:
+- Double Diamond → two \`diamond\` shape cards (Discover→Define on the left, Develop→Deliver on the right)
+- Venn / Ikigai → 2–3 overlapping \`circle\` shape cards
+- Kano Model → 3 horizontal \`rectangle\`/\`ellipse\` band shape cards
+- Business Motivation Model / SWOT-as-regions → \`rectangle\` shape cards
+
+If the framework's identity implies a spatial shape, emit the shape cards FIRST via \`addCard\` with meta keys \`shapeKind\`, \`x\`, \`y\`, \`shapeWidth\`, \`shapeHeight\`. The card's text is the shape's label. Use a 1600×1000 board: shapes typically 400–600px wide/tall.
+
+Then emit 2–6 content cards per shape region, setting each content card's \`meta.x\`/\`meta.y\` so it visually sits INSIDE the shape. Pick a col id for each content card based on which shape / region it belongs to (this is how AI later rearrangements track regional intent).
+
+If the framework is a loose mind-map / brainstorm without implied geometry, skip the shape cards and place 8–15 content cards with x/y laid out in clusters by col.
+      `.trim()
+    );
+  }
   return base + "Target ~50–70% fill across (col, row) positions; leave cells empty where there is no genuine insight. Use sub-items when a card has naturally nested detail.";
 }
 

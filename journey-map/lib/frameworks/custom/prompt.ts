@@ -221,7 +221,7 @@ export function buildDescribeSystemPrompt(): string {
     .join("\n\n---\n\n");
 
   return `
-You are a framework architect. Your job: given a short natural-language description of a framework the user wants, return a valid FrameworkConfig object via the propose_framework tool. The framework will be rendered by a universal grid system — every framework is cols × rows → cards, with three layout flavors (grid / kanban / matrix).
+You are a framework architect. Your job: given a short natural-language description of a framework the user wants, return a valid FrameworkConfig object via the propose_framework tool. The framework will be rendered by a universal grid system — every framework is cols × rows → cards, with four layout flavors (grid / kanban / matrix / freeform).
 
 You are NOT writing framework content. The seed you return has empty cards. A separate step will populate the seed with realistic example content after your config is validated.
 
@@ -229,7 +229,7 @@ You are NOT writing framework content. The seed you return has empty cards. A se
 
 - **id**: kebab-case slug starting with "custom-" (e.g. "custom-swot-analysis"). 3–40 chars after the prefix.
 - **label**: display name, ≤40 chars, capitalized naturally (e.g. "SWOT Analysis").
-- **layout**: one of \`"grid" | "kanban" | "matrix"\` — see decision rules below.
+- **layout**: one of \`"grid" | "kanban" | "matrix" | "freeform"\` — see decision rules below.
 - **colNoun / rowNoun / cardNoun**: singular labels used in UI buttons and agent prompts. ≤20 chars each. Examples: "Stage" / "Lane" / "Card", "Competitor" / "Criterion" / "Assessment", "Quadrant" / "Quadrant" / "Item".
 - **fixedCols / fixedRows**: set to \`true\` when the structure should be locked (the "Add column" affordance disappears). See layout rules.
 - **structuringPrompt**: 3–6 sentences explaining what col, row, and card MEAN in this framework. This text is appended to the universal system prompt whenever the agent works on this framework. DO NOT mention universal ops like addCard, moveRow, setCardMeta — the universal prompt already explains those. Focus on semantics: "Col = X", "Row = Y", "Card = Z", any fixed interpretations of specific quadrants, optional meta fields.
@@ -260,6 +260,13 @@ You are NOT writing framework content. The seed you return has empty cards. A se
 - Both \`fixedCols\` and \`fixedRows\` typically false.
 - **Mixed case**: if exactly one axis is fixed (e.g. RACI has a fixed set of 4 role cols but tasks grow over time), use \`grid\` and set ONLY the fixed axis's flag (\`fixedCols: true\` with dynamic rows, or vice versa). Do NOT use \`matrix\` — matrix requires BOTH axes fixed.
 
+**Pick \`freeform\` when**:
+- The framework has a SPATIAL shape that can't be captured as grid/kanban/matrix rows and columns. Overlapping regions, curved flows, irregular geometry.
+- Examples: Double Diamond (two diamonds side-by-side), Venn / Ikigai (overlapping circles), Kano Model (horizontal bands), concept mind-map, business motivation model, stakeholder concentric rings.
+- Freeform supports **shape cards**: at populate time, the agent emits cards with \`meta.shapeKind\` ∈ {\`"diamond"\`, \`"rectangle"\`, \`"circle"\`, \`"ellipse"\`} + \`meta.x/y\` + \`meta.shapeWidth/shapeHeight\` to draw editable background regions. Content cards then live at explicit \`(x, y)\` positions inside those regions. Your config doesn't include the shape cards (seed.cards is empty) — the populate step emits them.
+- Cols and rows still exist for freeform — use cols to tag the semantic regions (e.g. for Double Diamond: c1=Discover, c2=Define, c3=Develop, c4=Deliver). Use exactly one row ("All") or 2–3 card-type rows.
+- In the structuringPrompt, name the expected shape cards explicitly (e.g. "Two diamond shape cards labeled 'Discover → Define' and 'Develop → Deliver'") so the populate step knows what to draw.
+
 ## structuringPrompt guidance
 
 - 3–6 sentences. Concrete and specific to THIS framework.
@@ -278,14 +285,17 @@ If the user describes something unfamiliar, reason from first principles:
 3. **What is a card?** A finding, a stakeholder, a quote, a competitor, an action, an item? Pick the word that fits.
 4. **What's the nearest well-known analogue?** Adapt from that.
 
-## Fallback for non-grid frameworks
+## Non-grid frameworks
 
-If the user asks for a structure that doesn't fit (radar chart, mind map, flowchart, Venn diagram, hierarchical tree, timeline as continuous axis), pick the closest grid approximation and make the approximation explicit in the structuringPrompt:
+If the user asks for a spatial / overlapping / irregular structure, PREFER \`freeform\` over a grid approximation:
 
+- Venn diagram → freeform, cols are the sets, the populate step draws circle shape cards.
+- Double Diamond → freeform, cols = Discover/Define/Develop/Deliver, populate draws 2 diamond shape cards.
+- Mind map → freeform, cols are branches, no shape cards needed (cards cluster by col).
+- Kano Model → freeform, cols = Delighters/Performance/Basics, populate draws 3 band shape cards.
+- Concentric rings (onion model) → freeform, cols are layers, populate draws nested circle shape cards.
+- Flowchart / timeline → grid with stages as cols, decision points as cards.
 - Radar chart → kanban with one col per dimension, scores as cardMetaFields.
-- Mind map → grid with central theme in col 1, branches as cols 2+, notes as cards.
-- Flowchart → grid with stages as cols, decision points as cards, sequential order implied.
-- Timeline → grid with time-period cols.
 
 ## Examples of valid output (shape reference)
 
