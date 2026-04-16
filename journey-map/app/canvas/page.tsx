@@ -1,8 +1,7 @@
 "use client";
 
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ArrowLeft, Plus } from "lucide-react";
 import {
   applyDesignSystem,
   applyDesignTokenCssVars,
@@ -42,6 +41,7 @@ export default function CanvasPage() {
 }
 
 function CanvasPageInner() {
+  const router = useRouter();
   const {
     hydrated,
     boards,
@@ -58,6 +58,15 @@ function CanvasPageInner() {
     cancelPending,
   } = useCanvas();
   const activeBoard = useActiveBoard();
+
+  // No boards in the workspace? Send the user back to the landing instead of
+  // showing an empty-state page — the landing IS the home. This keeps the app
+  // to two meaningful surfaces: the prompt hero and the board workspace.
+  useEffect(() => {
+    if (hydrated && boards.length === 0) {
+      router.replace("/");
+    }
+  }, [hydrated, boards.length, router]);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -197,43 +206,10 @@ function CanvasPageInner() {
 
   const allFrameworks = listFrameworks();
 
-  // ── Empty state ────────────────────────────────────────────────────────────
+  // Hydrated but no boards → the redirect effect above will fire; render
+  // nothing for a beat rather than flashing the old empty state.
   if (hydrated && boards.length === 0) {
-    return (
-      <div className="fixed inset-0 flex items-center justify-center">
-        <div className="max-w-sm text-center space-y-4 px-6">
-          <div className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-ink-primary/[0.06] text-ink-primary mx-auto">
-            <Plus className="h-5 w-5" />
-          </div>
-          <h1 className="text-[18px] font-medium text-ink-primary">Empty workspace</h1>
-          <p className="text-[13px] text-ink-muted leading-relaxed">
-            Head back to the home screen to describe what you want to build, or pick a framework from the library.
-          </p>
-          <div className="flex items-center justify-center gap-2">
-            <Link
-              href="/"
-              className="inline-flex items-center gap-1.5 rounded-xl bg-ink-primary text-white px-4 py-2 text-[13px] font-medium hover:bg-[#1b1c20] transition-colors"
-            >
-              <ArrowLeft className="h-3.5 w-3.5" />
-              Start from home
-            </Link>
-            <button
-              type="button"
-              onClick={() => setDialogOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-white border border-border-soft hover:border-border-medium px-4 py-2 text-[13px] text-ink-primary transition-colors"
-            >
-              Describe a framework
-            </button>
-          </div>
-        </div>
-        <CustomFrameworkDialog
-          open={dialogOpen}
-          onClose={() => setDialogOpen(false)}
-          onSuccess={handleCustomGenerated}
-          existingIds={allFrameworks.map((fw) => fw.id)}
-        />
-      </div>
-    );
+    return <div className="fixed inset-0" />;
   }
 
   // Clicking blank canvas space deactivates the current board. Skip any
