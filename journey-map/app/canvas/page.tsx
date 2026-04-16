@@ -20,6 +20,7 @@ import { FrameworkLibrary } from "@/components/FrameworkLibrary";
 import { GenerationOverlay } from "@/components/GenerationOverlay";
 import { TopBar } from "@/components/TopBar";
 import { ZoomControls } from "@/components/ZoomControls";
+import { BoardFrame } from "@/components/BoardFrame";
 import {
   getFramework,
   isDynamicFramework,
@@ -30,7 +31,7 @@ import type { FrameworkConfig } from "@/lib/frameworks/universal/config";
 import type { UniversalMap } from "@/lib/frameworks/universal/types";
 import { ZoomProvider, useZoom } from "@/lib/zoom-context";
 import { useCanvas, useActiveBoard } from "@/lib/canvas/context";
-import { PendingBoardSkeleton } from "@/components/PendingBoardSkeleton";
+import type { Board } from "@/lib/canvas/types";
 
 export default function CanvasPage() {
   return (
@@ -46,9 +47,12 @@ function CanvasPageInner() {
     boards,
     activeBoardId,
     addBoard,
+    removeBoard,
+    duplicateBoard,
     updateBoardMap,
     updateBoardTitle,
     setBoardSelection,
+    setActiveBoardId,
     pending,
     cancelPending,
   } = useCanvas();
@@ -59,14 +63,16 @@ function CanvasPageInner() {
   const [generation, setGeneration] = useState<GenerateEvent<UniversalMap> | null>(null);
   const cancelGenerationRef = useRef<(() => void) | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
-  const { fitToContent } = useZoom();
+  const { fitToContent, x: panX, y: panY, scale } = useZoom();
 
-  // Resolve the framework the active board is showing. When there is no active
-  // board (empty workspace), we render a placeholder and skip the copilot.
-  const framework = activeBoard ? safelyGetFramework(activeBoard.frameworkId, activeBoard.customConfig) : null;
+  const activeFramework = activeBoard ? safelyGetFramework(activeBoard.frameworkId) : null;
+  const pendingForActive =
+    pending && activeBoard && pending.boardId === activeBoard.id ? pending : null;
 
   const generationActive =
     generation !== null && generation.phase !== "result" && generation.phase !== "error";
+  const isPendingGenerate = activeBoard?.status === "pending-generate";
+  const isPendingDescribe = activeBoard?.status === "pending-describe";
 
   const registerCancel = useCallback((cancel: (() => void) | null) => {
     cancelGenerationRef.current = cancel;
@@ -77,7 +83,9 @@ function CanvasPageInner() {
     setGeneration(null);
   }, []);
 
-  const fitNow = useCallback(() => {
+  // Fit the union of all boards to the viewport. Used on first mount and after
+  // a new board is added so the user sees the full workspace.
+  const fitAll = useCallback(() => {
     const node = stageRef.current;
     if (!node) return;
     fitToContent(
@@ -87,63 +95,53 @@ function CanvasPageInner() {
     );
   }, [fitToContent]);
 
-  const prevBoardId = useRef<string | null>(null);
+  // Re-fit whenever the number of boards changes (new board appears) or the
+  // active board changes to something out of view.
+  const prevBoardsLen = useRef(boards.length);
   useLayoutEffect(() => {
-    if (prevBoardId.current !== activeBoardId) {
-      prevBoardId.current = activeBoardId;
-      requestAnimationFrame(fitNow);
+    if (prevBoardsLen.current !== boards.length) {
+      prevBoardsLen.current = boards.length;
+      requestAnimationFrame(fitAll);
     }
-  }, [activeBoardId, fitNow]);
+  }, [boards.length, fitAll]);
 
   useEffect(() => {
-    const onResize = () => fitNow();
+    const onResize = () => fitAll();
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, [fitNow]);
+  }, [fitAll]);
 
-  // Apply stored theme/DS to [data-map-page] whenever the active board changes.
-  // (Phase 2 will shift this to a canvas-root target; for now keep behavior
-  // identical to the pre-refactor single-board page so theming doesn't regress.)
+  // Apply stored theme/DS globally to the canvas root rather than per-board,
+  // so every board on the workspace shares one visual language.
   useLayoutEffect(() => {
-    let cancelled = false;
-    let tries = 0;
-    function applyFromStorage() {
-      if (cancelled) return;
-      const target = document.querySelector<HTMLElement>("[data-map-page]");
-      if (!target) {
-        if (tries++ < 20) requestAnimationFrame(applyFromStorage);
-        return;
+    const target = document.documentElement;
+    try {
+      const themeRaw = loadStoredThemeJson();
+      if (themeRaw) {
+        try {
+          const parsed = parseThemeImport(JSON.parse(themeRaw) as unknown);
+          if (parsed.ok) applyTheme(parsed.theme, target);
+        } catch { /* ignore */ }
       }
-      try {
-        const themeRaw = loadStoredThemeJson();
-        if (themeRaw) {
-          try {
-            const parsed = parseThemeImport(JSON.parse(themeRaw) as unknown);
-            if (parsed.ok) applyTheme(parsed.theme, target);
-          } catch { /* ignore */ }
-        }
-        const extra = loadStoredDesignTokenCssVarsJson();
-        if (extra) {
-          try {
-            applyDesignTokenCssVars(JSON.parse(extra) as Record<string, string>, target);
-          } catch {
-            applyDesignTokenCssVars(undefined, target);
-          }
-        } else {
+      const extra = loadStoredDesignTokenCssVarsJson();
+      if (extra) {
+        try {
+          applyDesignTokenCssVars(JSON.parse(extra) as Record<string, string>, target);
+        } catch {
           applyDesignTokenCssVars(undefined, target);
         }
-        const dsRaw = loadStoredDesignSystemJson();
-        if (dsRaw) {
-          try {
-            const parsed = parseDesignSystem(JSON.parse(dsRaw) as unknown);
-            if (parsed.ok) applyDesignSystem(parsed.ds, target);
-          } catch { /* ignore */ }
-        }
-      } catch { /* ignore */ }
-    }
-    applyFromStorage();
-    return () => { cancelled = true; };
-  }, [activeBoardId]);
+      } else {
+        applyDesignTokenCssVars(undefined, target);
+      }
+      const dsRaw = loadStoredDesignSystemJson();
+      if (dsRaw) {
+        try {
+          const parsed = parseDesignSystem(JSON.parse(dsRaw) as unknown);
+          if (parsed.ok) applyDesignSystem(parsed.ds, target);
+        } catch { /* ignore */ }
+      }
+    } catch { /* ignore */ }
+  }, []);
 
   const onTitleChange = useCallback(
     (title: string) => {
@@ -154,14 +152,32 @@ function CanvasPageInner() {
   );
 
   function handleCustomGenerated(cfg: FrameworkConfig, populatedMap: UniversalMap) {
+    const placement = viewportCenterInCanvasCoords(panX, panY, scale, boards);
     addBoard({
       frameworkId: cfg.id,
       customConfig: cfg,
       title: populatedMap.title || cfg.label,
       map: populatedMap,
+      x: placement.x,
+      y: placement.y,
       makeActive: true,
     });
     setDialogOpen(false);
+  }
+
+  function addBoardFromTemplate(fwId: string) {
+    const fw = listFrameworks().find((f) => f.id === fwId);
+    if (!fw) return;
+    const placement = viewportCenterInCanvasCoords(panX, panY, scale, boards);
+    addBoard({
+      frameworkId: fw.id,
+      customConfig: isDynamicFramework(fw.id) ? (fw.config as FrameworkConfig) : undefined,
+      title: fw.seed.title || fw.label,
+      map: fw.seed,
+      x: placement.x,
+      y: placement.y,
+      makeActive: true,
+    });
   }
 
   const allFrameworks = listFrameworks();
@@ -205,102 +221,64 @@ function CanvasPageInner() {
     );
   }
 
-  if (!activeBoard) {
-    return <div className="fixed inset-0" />;
+  // Clicking blank canvas space deactivates the current board.
+  function onCanvasBackgroundClick(e: React.MouseEvent) {
+    const target = e.target as HTMLElement;
+    if (target.closest("[data-board-frame]")) return;
+    setActiveBoardId(null);
   }
-
-  const isPendingDescribe = activeBoard.status === "pending-describe";
-  const isPendingGenerate = activeBoard.status === "pending-generate";
-  const pendingForActive = pending && pending.boardId === activeBoard.id ? pending : null;
-
-  // If the active board is waiting for describe, we render the skeleton and
-  // skip the framework renderer entirely (the board's frameworkId is a
-  // placeholder until describe resolves).
-  if (isPendingDescribe) {
-    return (
-      <div className="fixed inset-0">
-        <Canvas locked>
-          <div ref={stageRef} className="p-12">
-            <PendingBoardSkeleton
-              title={activeBoard.title || "Designing framework…"}
-              prompt={activeBoard.pendingPrompt}
-              statusLabel={
-                pendingForActive?.error
-                  ? "Error"
-                  : "Designing structure and filling in content…"
-              }
-            />
-          </div>
-        </Canvas>
-
-        <GenerationOverlay
-          active={!pendingForActive?.error}
-          progress={null}
-          onCancel={() => {
-            cancelPending();
-          }}
-          frameworkLabel="your framework"
-        />
-
-        {pendingForActive?.error && (
-          <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 glass rounded-xl px-4 py-3 text-[13px] text-rose-900 bg-rose-50/80 border border-rose-100 max-w-md">
-            {pendingForActive.error}
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  // For pending-generate OR ready boards we need the framework component.
-  if (!framework) {
-    return <div className="fixed inset-0" />;
-  }
-
-  const Component = framework.Component;
 
   return (
-    <div className="fixed inset-0">
-      <Canvas locked={generationActive || isPendingGenerate}>
-        <div ref={stageRef} className="p-12">
-          <div
-            data-map-page
-            className={[
-              "inline-block rounded-3xl bg-surface",
-              "px-10 py-10 md:px-12 md:py-12",
-              "shadow-panel ring-1 ring-border-soft/70",
-            ].join(" ")}
-          >
-            <Component
-              map={activeBoard.map}
-              onChange={(next) => updateBoardMap(activeBoard.id, next)}
-              busy={busy || isPendingGenerate}
-              selection={activeBoard.selection}
-              onSelectionChange={(sel) =>
-                setBoardSelection(activeBoard.id, (sel ?? null) as never)
+    <div className="fixed inset-0" onPointerDown={onCanvasBackgroundClick}>
+      <Canvas locked={generationActive || isPendingGenerate || isPendingDescribe}>
+        <div ref={stageRef} className="relative p-12" style={{ minWidth: 800, minHeight: 600 }}>
+          {boards.map((board) => (
+            <BoardFrame
+              key={board.id}
+              board={board}
+              framework={safelyGetFramework(board.frameworkId)}
+              isActive={board.id === activeBoardId}
+              pendingStatusLabel={
+                pending && pending.boardId === board.id
+                  ? statusLabel(pending.lastEvent, pending.kind, !!pending.error)
+                  : undefined
+              }
+              onActivate={() => setActiveBoardId(board.id)}
+              onTitleChange={(title) => updateBoardTitle(board.id, title)}
+              onMapChange={(next) => updateBoardMap(board.id, next)}
+              onSelectionChange={(sel) => setBoardSelection(board.id, sel)}
+              onDelete={() => removeBoard(board.id)}
+              onDuplicate={() => duplicateBoard(board.id)}
+              locked={
+                generationActive ||
+                (pending?.boardId === board.id && !pending?.error) ||
+                (board.status === "pending-generate" || board.status === "pending-describe")
               }
             />
-          </div>
+          ))}
         </div>
       </Canvas>
 
-      {/* Library toggle — fixed bottom-left */}
-      <div className="fixed bottom-4 left-4 z-40">
+      {/* Library toggle — fixed bottom-left. Opens the same pill picker as the
+          landing, but here clicking a framework creates a new board beside the
+          current ones rather than replacing the active board. */}
+      <div className="fixed bottom-4 left-4 z-40" data-floating>
         <button
           onClick={() => setLibraryOpen((o) => !o)}
-          className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-md ring-1 ring-slate-200 hover:ring-slate-300 transition"
+          className="glass rounded-xl px-3 py-2 text-[12px] font-medium text-ink-primary inline-flex items-center gap-2 hover:bg-white/90 transition"
         >
-          <span className="text-slate-400">⊞</span>
-          Library
+          <span className="text-ink-muted">⊞</span>
+          Add from library
         </button>
       </div>
 
       {libraryOpen && (
         <div
-          className="fixed bottom-16 left-4 z-40 w-[320px] max-h-[70vh] overflow-y-auto rounded-2xl bg-white shadow-panel ring-1 ring-border-soft p-4"
+          data-floating
+          className="fixed bottom-16 left-4 z-40 w-[320px] max-h-[70vh] overflow-y-auto glass rounded-2xl p-4"
         >
           <FrameworkLibrary
             compact
-            hideCustomCard={false}
             selectedId={null}
             onSelect={(id) => {
               if (id === null) {
@@ -308,15 +286,7 @@ function CanvasPageInner() {
                 setLibraryOpen(false);
                 return;
               }
-              const fw = allFrameworks.find((f) => f.id === id);
-              if (!fw) return;
-              addBoard({
-                frameworkId: fw.id,
-                customConfig: isDynamicFramework(fw.id) ? fw.config : undefined,
-                title: fw.seed.title || fw.label,
-                map: fw.seed,
-                makeActive: true,
-              });
+              addBoardFromTemplate(id);
               setLibraryOpen(false);
             }}
           />
@@ -330,51 +300,61 @@ function CanvasPageInner() {
         existingIds={allFrameworks.map((fw) => fw.id)}
       />
 
-      <TopBar
-        title={activeBoard.map.title ?? ""}
-        onTitleChange={onTitleChange}
-        map={activeBoard.map}
-        exportLocked={generationActive}
-      />
+      {/* TopBar + Copilot are bound to the ACTIVE board. If nothing is active,
+          they render nothing meaningful — user clicks a board first. */}
+      {activeBoard && activeFramework && (
+        <>
+          <TopBar
+            title={activeBoard.map.title ?? activeBoard.title ?? ""}
+            onTitleChange={onTitleChange}
+            map={activeBoard.map}
+            exportLocked={generationActive}
+          />
 
-      <Copilot
-        frameworkId={framework.id}
-        frameworkLabel={framework.label}
-        frameworkConfig={framework.config}
-        customConfig={isDynamicFramework(framework.id) ? framework.config : undefined}
-        frameworkSubtitle={framework.config.chatSubtitle}
-        chatPlaceholder={framework.config.chatPlaceholder}
-        frameworkOptions={allFrameworks.map((fw) => ({ id: fw.id, label: fw.label }))}
-        onFrameworkChange={(nextId) => {
-          // Switch the active board to use a different framework — applies the
-          // new framework's seed as the board's map (matches pre-refactor UX).
-          const next = allFrameworks.find((fw) => fw.id === nextId);
-          if (!next || !activeBoard) return;
-          updateBoardMap(activeBoard.id, next.seed);
-        }}
-        map={activeBoard.map}
-        onMapChange={(next) => updateBoardMap(activeBoard.id, next)}
-        applyOps={framework.applyOps}
-        exampleInstructions={framework.exampleInstructions}
-        onBusyChange={setBusy}
-        focus={activeBoard.selection}
-        onFocusClear={() => setBoardSelection(activeBoard.id, null)}
-        onGenerationProgress={setGeneration}
-        registerGenerationCancel={registerCancel}
-      />
+          <Copilot
+            frameworkId={activeFramework.id}
+            frameworkLabel={activeFramework.label}
+            frameworkConfig={activeFramework.config}
+            customConfig={isDynamicFramework(activeFramework.id) ? activeFramework.config : undefined}
+            frameworkSubtitle={activeFramework.config.chatSubtitle}
+            chatPlaceholder={activeFramework.config.chatPlaceholder}
+            frameworkOptions={allFrameworks.map((fw) => ({ id: fw.id, label: fw.label }))}
+            onFrameworkChange={(nextId) => {
+              // Changing the active board's framework — reseed the map. This
+              // matches the pre-refactor UX; down the line we may want to ask
+              // before clobbering a populated board.
+              const next = allFrameworks.find((fw) => fw.id === nextId);
+              if (!next || !activeBoard) return;
+              updateBoardMap(activeBoard.id, next.seed);
+            }}
+            map={activeBoard.map}
+            onMapChange={(next) => updateBoardMap(activeBoard.id, next)}
+            applyOps={activeFramework.applyOps}
+            exampleInstructions={activeFramework.exampleInstructions}
+            onBusyChange={setBusy}
+            focus={activeBoard.selection}
+            onFocusClear={() => setBoardSelection(activeBoard.id, null)}
+            onGenerationProgress={setGeneration}
+            registerGenerationCancel={registerCancel}
+          />
+        </>
+      )}
 
-      <ZoomControls onFit={fitNow} />
+      <ZoomControls onFit={fitAll} />
 
-      <GenerationOverlay
-        active={generationActive || isPendingGenerate}
-        progress={pendingForActive?.lastEvent ?? generation}
-        onCancel={() => {
-          if (isPendingGenerate) cancelPending();
-          else onGenerationCancel();
-        }}
-        frameworkLabel={framework.label}
-      />
+      {(activeBoard && (isPendingGenerate || generationActive)) && (
+        <GenerationOverlay
+          active
+          progress={pendingForActive?.lastEvent ?? generation}
+          onCancel={() => {
+            if (isPendingGenerate) cancelPending();
+            else onGenerationCancel();
+          }}
+          frameworkLabel={activeFramework?.label ?? "your framework"}
+        />
+      )}
 
+      {/* Bottom-center error toast for pending failures */}
       {pendingForActive?.error && (
         <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 glass rounded-xl px-4 py-3 text-[13px] text-rose-900 bg-rose-50/80 border border-rose-100 max-w-md">
           {pendingForActive.error}
@@ -384,18 +364,65 @@ function CanvasPageInner() {
   );
 }
 
-// Guarded getFramework — if a board references a custom framework that failed
-// to re-register (shouldn't happen after hydration, but defend anyway), fall
-// back to returning null so the page renders the empty state instead of crashing.
-function safelyGetFramework(id: string, customConfig?: FrameworkConfig) {
+// ──────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ──────────────────────────────────────────────────────────────────────────────
+
+function safelyGetFramework(id: string) {
   try {
     return getFramework(id);
   } catch {
-    if (customConfig) {
-      // This should be unreachable because context.tsx registers customConfig
-      // on load and on addBoard — keep the guard minimal.
-      return null;
-    }
     return null;
+  }
+}
+
+/** Canvas-space position for a new board, centered on the current viewport.
+ *  Canvas coords = (screen - pan) / scale. Returns the top-left of a ~900x600
+ *  board so its visual center lands near the viewport center. */
+function viewportCenterInCanvasCoords(
+  panX: number,
+  panY: number,
+  scale: number,
+  existing: Board[]
+): { x: number; y: number } {
+  if (typeof window === "undefined") return { x: 0, y: 0 };
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const halfW = 450;
+  const halfH = 300;
+  const x = (vw / 2 - panX) / scale - halfW;
+  const y = (vh / 2 - panY) / scale - halfH;
+  // If this exact position is already very close to another board, nudge to avoid overlap.
+  for (const b of existing) {
+    if (Math.abs(b.x - x) < 80 && Math.abs(b.y - y) < 80) {
+      return { x: b.x + 40, y: b.y + 40 };
+    }
+  }
+  return { x, y };
+}
+
+function statusLabel(
+  ev: GenerateEvent<UniversalMap> | null,
+  kind: "describe" | "generate",
+  hasError: boolean
+): string {
+  if (hasError) return "Error";
+  if (kind === "describe") return "Designing structure and filling in content…";
+  if (!ev) return "Starting…";
+  switch (ev.phase) {
+    case "ingesting":
+      return "Reading source material…";
+    case "subject_id":
+      return "Identifying the subject…";
+    case "extracting":
+      return "Extracting key details…";
+    case "synthesizing":
+      return "Structuring into a framework…";
+    case "critiquing":
+      return "Critiquing output quality…";
+    case "revising":
+      return "Revising based on critique…";
+    default:
+      return "Working…";
   }
 }

@@ -29,7 +29,7 @@ type Props = {
 };
 
 const DEFAULT_INTERACTIVE_SELECTOR =
-  "[data-block],[data-row],[data-stage],[data-empty-slot],[data-row-shell],[data-floating],[data-edge-zone]";
+  "[data-block],[data-row],[data-stage],[data-empty-slot],[data-row-shell],[data-floating],[data-edge-zone],[data-board-frame],[data-board-header],[data-board-map-root]";
 
 /** How aggressively a wheel turns into zoom. Smaller = gentler. */
 const ZOOM_SENSITIVITY = 0.004;
