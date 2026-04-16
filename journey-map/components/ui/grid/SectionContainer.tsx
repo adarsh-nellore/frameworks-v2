@@ -25,7 +25,10 @@ export function SectionContainer({ kind, emphasized = false, children }: Props) 
   return (
     <div
       className={[
-        "relative flex flex-col gap-3 rounded-2xl p-3 ring-1 transition-colors",
+        // group/section so AddSlotButton (and any other slide-polish affordance)
+        // can reveal itself on hover over the whole column rather than needing
+        // to hover the invisible dashed button itself.
+        "group/section relative flex flex-col gap-3 rounded-2xl p-3 ring-1 transition-colors",
         emphasized
           ? "bg-ink-primary/[0.04] ring-ink-primary/15"
           : "bg-ink-primary/[0.02] ring-border-soft/60",

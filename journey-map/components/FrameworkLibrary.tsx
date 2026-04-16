@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, useEffect } from "react";
-import { Sparkles, LayoutGrid, Grid3x3, Columns3, Trash2, StickyNote } from "lucide-react";
+import { Sparkles, LayoutGrid, Grid3x3, Columns3, Trash2, StickyNote, Diamond } from "lucide-react";
 import {
   listFrameworks,
   isDynamicFramework,
@@ -35,10 +35,11 @@ export type FrameworkLibraryProps = {
   hideCustomCard?: boolean;
 };
 
-function layoutIcon(layout: "grid" | "kanban" | "matrix" | "freeform") {
+function layoutIcon(layout: "grid" | "kanban" | "matrix" | "freeform" | "diamond") {
   if (layout === "kanban") return Columns3;
   if (layout === "matrix") return Grid3x3;
   if (layout === "freeform") return StickyNote;
+  if (layout === "diamond") return Diamond;
   return LayoutGrid;
 }
 

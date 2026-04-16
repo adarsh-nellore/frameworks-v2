@@ -782,28 +782,55 @@ export const portersFiveForcesConfig = kanban({
   chatSubtitle: "Five forces of industry competition",
 });
 
-export const doubleDiamondConfig = kanban({
+export const doubleDiamondConfig: FrameworkConfig = {
   id: "double-diamond",
   label: "Double Diamond",
-  title: "Double Diamond",
-  cardNoun: "Activity",
+  layout: "diamond",
   colNoun: "Phase",
+  rowNoun: "Card",
+  cardNoun: "Activity",
   fixedCols: true,
-  cols: [
-    { label: "Discover", kind: "research", seeds: ["Customer interviews", "Competitive teardown", "Support-ticket trawl"] },
-    { label: "Define", kind: "problem", seeds: ["How-might-we statements", "Priority user segments"] },
-    { label: "Develop", kind: "ideation", seeds: ["Concept sketches", "Rapid prototypes", "Low-fi user tests"] },
-    { label: "Deliver", kind: "solution", seeds: ["Scoped MVP", "Launch checklist"] },
-  ],
-  structuringPrompt: `UK Design Council Double Diamond: two diamonds — Discover→Define (find the right problem) and Develop→Deliver (find the right solution). Cards are activities or artifacts in each phase. NOTE: current renderer shows a linear 4-column layout; a dedicated diamond visual is a later enhancement.`,
+  seed: {
+    id: "template",
+    title: "Double Diamond",
+    meta: {},
+    cols: [
+      { id: "c1", label: "Discover", kind: "research" },
+      { id: "c2", label: "Define",   kind: "problem" },
+      { id: "c3", label: "Develop",  kind: "ideation" },
+      { id: "c4", label: "Deliver",  kind: "solution" },
+    ],
+    rows: [{ id: "r1", label: "All", kind: "default" }],
+    cards: [
+      { id: "k1", colId: "c1", rowId: "r1", text: "Customer interviews",    order: 0 },
+      { id: "k2", colId: "c1", rowId: "r1", text: "Competitive teardown",   order: 1 },
+      { id: "k3", colId: "c1", rowId: "r1", text: "Support-ticket trawl",   order: 2 },
+      { id: "k4", colId: "c2", rowId: "r1", text: "How-might-we statements", order: 0 },
+      { id: "k5", colId: "c2", rowId: "r1", text: "Priority user segments",  order: 1 },
+      { id: "k6", colId: "c3", rowId: "r1", text: "Concept sketches",  order: 0 },
+      { id: "k7", colId: "c3", rowId: "r1", text: "Rapid prototypes",  order: 1 },
+      { id: "k8", colId: "c3", rowId: "r1", text: "Low-fi user tests", order: 2 },
+      { id: "k9", colId: "c4", rowId: "r1", text: "Scoped MVP",        order: 0 },
+      { id: "k10", colId: "c4", rowId: "r1", text: "Launch checklist", order: 1 },
+    ],
+  },
   exampleInstructions: [
     "Add discovery activities scheduled for the research sprint",
     "Tighten Define into two How-Might-We statements",
     "Propose three prototypes for the Develop phase",
     "Identify what's missing before we can Deliver",
   ],
+  chatPlaceholder: "Reshape the double diamond…",
   chatSubtitle: "Discover → Define → Develop → Deliver",
-});
+  structuringPrompt: `
+You are building a **Double Diamond** — the UK Design Council process with two adjacent diamonds.
+
+- Diamond 1: Discover (diverge) → Define (converge) — finding the right problem.
+- Diamond 2: Develop (diverge) → Deliver (converge) — finding the right solution.
+
+Columns map to phases (c1=Discover, c2=Define, c3=Develop, c4=Deliver). There is exactly one row (r1 "All"). Cards are activities, artifacts, or decisions inside each phase. Favor 3–6 cards per phase.
+  `.trim(),
+};
 
 export const nowNextLaterConfig = kanban({
   id: "now-next-later",

@@ -35,11 +35,15 @@ export function AddSlotButton({
       }}
       style={width ? { width } : undefined}
       className={[
-        "group inline-flex items-center justify-center gap-1.5",
+        // "add" affordances are hidden until the user hovers the surrounding
+        // column/row so the board reads like a slide at rest. Focus keeps
+        // them visible for keyboard users.
+        "opacity-0 focus-visible:opacity-100 group-hover/section:opacity-100",
+        "inline-flex items-center justify-center gap-1.5",
         "rounded-lg border border-dashed border-border-soft",
         "hover:border-border-medium hover:bg-white/40",
         "text-ink-muted hover:text-ink-secondary",
-        "transition-colors disabled:opacity-50 disabled:cursor-not-allowed",
+        "transition-all disabled:opacity-50 disabled:cursor-not-allowed",
         orientation === "row" ? "h-10 px-3" : "w-full py-2.5",
         fullWidth ? "w-full" : "shrink-0",
       ].join(" ")}

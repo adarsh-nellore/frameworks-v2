@@ -5,6 +5,23 @@ import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { CornerUpLeft, Plus, X } from "lucide-react";
 import { kindTheme } from "@/lib/row-kind-theme";
 import { renderCellText } from "@/lib/cell-text";
+
+// A kind is "known" (and thus worth rendering an icon for) when it maps to a
+// specific icon in the theme lookup. Neutral / default kinds render as an
+// empty Square which reads as UI chrome, so we hide the chip in those cases.
+const KNOWN_KINDS = new Set([
+  "actions", "touchpoints", "thoughts", "emotions", "pain_points",
+  "opportunities", "metrics", "stakeholders", "systems", "channels",
+  "decisions", "artifacts", "functional_jobs", "emotional_jobs",
+  "social_jobs", "desired_outcomes", "current_solutions", "context_triggers",
+  "hiring_criteria", "firing_criteria", "observation", "quote", "insight",
+  "need", "theme", "ungrouped", "subject", "competitor", "criterion",
+  "quadrant_high", "quadrant_low",
+]);
+function hasKindIcon(kind: string | undefined): boolean {
+  if (!kind) return false;
+  return KNOWN_KINDS.has(kind.toLowerCase());
+}
 import type { Card, CardMeta } from "@/lib/frameworks/universal/types";
 import type { CardMetaField } from "@/lib/frameworks/universal/config";
 
@@ -210,22 +227,32 @@ export function GridCard({
                 : idleClasses,
         ].join(" ")}
       >
-        {/* Top row: kind chip + numeric anchor */}
-        <div className="flex items-center justify-between mb-2">
-          <span
-            className={[
-              "inline-flex h-6 w-6 items-center justify-center rounded-md",
-              theme.chipBg,
-            ].join(" ")}
-          >
-            <Icon className={`h-3.5 w-3.5 ${theme.chipText}`} />
-          </span>
-          {number !== undefined && (
-            <span className="font-mono text-[9px] tabular-nums tracking-[0.18em] text-ink-muted bg-ink-primary/[0.04] rounded-md px-1.5 py-0.5 group-hover:text-ink-secondary transition-colors">
-              {number.toString().padStart(2, "0")}
-            </span>
-          )}
-        </div>
+        {/* Top row: kind chip + numeric anchor. The chip is hidden when the
+            card's theme is the neutral default (no specific kind) — in that
+            case the chip was just an empty Square icon that looked like a
+            placeholder checkbox. Framework-specific kinds (observation,
+            pain_points, etc.) still get their icon. */}
+        {(hasKindIcon(themeKind) || number !== undefined) && (
+          <div className="flex items-center justify-between mb-2">
+            {hasKindIcon(themeKind) ? (
+              <span
+                className={[
+                  "inline-flex h-6 w-6 items-center justify-center rounded-md",
+                  theme.chipBg,
+                ].join(" ")}
+              >
+                <Icon className={`h-3.5 w-3.5 ${theme.chipText}`} />
+              </span>
+            ) : (
+              <span />
+            )}
+            {number !== undefined && (
+              <span className="font-mono text-[9px] tabular-nums tracking-[0.18em] text-ink-muted bg-ink-primary/[0.04] rounded-md px-1.5 py-0.5 group-hover:text-ink-secondary transition-colors">
+                {number.toString().padStart(2, "0")}
+              </span>
+            )}
+          </div>
+        )}
 
         {editing ? (
           <textarea
@@ -300,11 +327,11 @@ export function GridCard({
             )}
 
             {/* Sub-items (one level of nesting). Compact bullet rows beneath the body.
-                Each sub-item is independently selectable so multi-select for Copilot context
-                works across parents and children. Children cannot have their own sub-items. */}
-            {(subItems && subItems.length > 0) || onAddChild ? (
+                The + Sub-item button only appears when the card is selected or hovered,
+                keeping the at-rest card face clean and slide-like. */}
+            {subItems && subItems.length > 0 ? (
               <div className="mt-2 flex flex-col gap-1 border-t border-border-soft/60 pt-2">
-                {subItems?.map((child) => (
+                {subItems.map((child) => (
                   <SubItemRow
                     key={child.id}
                     child={child}
@@ -324,7 +351,12 @@ export function GridCard({
                       e.stopPropagation();
                       onAddChild(card.id);
                     }}
-                    className="self-start inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-mono tracking-[0.14em] uppercase text-ink-muted hover:text-ink-secondary hover:bg-ink-primary/[0.05] transition-colors"
+                    className={[
+                      "self-start inline-flex items-center gap-1 rounded-md px-1.5 py-0.5",
+                      "text-[10px] font-mono tracking-[0.14em] uppercase text-ink-muted",
+                      "hover:text-ink-secondary hover:bg-ink-primary/[0.05] transition-all",
+                      isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+                    ].join(" ")}
                     aria-label="Add sub-item"
                   >
                     <Plus className="h-3 w-3" />
@@ -332,6 +364,26 @@ export function GridCard({
                   </button>
                 )}
               </div>
+            ) : onAddChild && !agentBusy ? (
+              // Nothing rendered at rest — only on hover/select does the "+ Sub-item"
+              // hint appear, so empty cards read as clean slide elements.
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onAddChild(card.id);
+                }}
+                className={[
+                  "mt-2 self-start inline-flex items-center gap-1 rounded-md px-1.5 py-0.5",
+                  "text-[10px] font-mono tracking-[0.14em] uppercase text-ink-muted",
+                  "hover:text-ink-secondary hover:bg-ink-primary/[0.05] transition-all",
+                  isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+                ].join(" ")}
+                aria-label="Add sub-item"
+              >
+                <Plus className="h-3 w-3" />
+                Sub-item
+              </button>
             ) : null}
 
             {/* Inline remove — always visible when the card is selected so

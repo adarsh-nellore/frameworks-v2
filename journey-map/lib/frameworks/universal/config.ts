@@ -35,8 +35,12 @@ export type FrameworkConfig = {
    *                pixel coordinates. cols/rows still exist (used for grouping
    *                cards into semantic clusters + tool ops), but are rendered as
    *                soft labels, not grid lines.
+   * - "diamond"  = Double Diamond visual (two adjacent diamond shapes). Works
+   *                best with exactly 4 cols; other shapes fall back to kanban
+   *                flow with diamond chrome. Cards stack vertically inside
+   *                each diamond phase (discover/define/develop/deliver style).
    */
-  layout: "grid" | "kanban" | "matrix" | "freeform";
+  layout: "grid" | "kanban" | "matrix" | "freeform" | "diamond";
 
   // ── Vocabulary (used in prompts and UI labels) ──────────────────────────────
   colNoun: string;   // "Stage" | "Section" | "Competitor" | "Theme"

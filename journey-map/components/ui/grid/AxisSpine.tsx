@@ -45,9 +45,6 @@ export function XAxisBand({
 }) {
   return (
     <div className="flex items-center gap-2 mb-2 ml-[200px] pr-2">
-      <span className="font-mono text-[9px] tracking-[0.22em] uppercase text-ink-muted shrink-0">
-        X Axis
-      </span>
       <EditableAxisLabel
         value={label}
         agentBusy={agentBusy}
@@ -74,9 +71,6 @@ export function YAxisBand({
     <div className="absolute left-0 top-0 bottom-0 w-8 flex flex-col items-center justify-between py-3 pointer-events-none">
       <ArrowUp className="h-3 w-3 text-ink-muted shrink-0" />
       <div className="pointer-events-auto flex items-center gap-2 -rotate-90 origin-center whitespace-nowrap">
-        <span className="font-mono text-[9px] tracking-[0.22em] uppercase text-ink-muted">
-          Y Axis
-        </span>
         <EditableAxisLabel
           value={label}
           agentBusy={agentBusy}
@@ -85,7 +79,7 @@ export function YAxisBand({
         />
       </div>
       <span className="font-mono text-[8px] tracking-[0.22em] uppercase text-ink-muted/60">
-        ↓ low
+        ↓
       </span>
     </div>
   );
