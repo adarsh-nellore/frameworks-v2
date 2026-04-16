@@ -79,15 +79,14 @@ export function validateFrameworkConfig(raw: unknown, existingIds: Iterable<stri
     src.layout !== "grid" &&
     src.layout !== "kanban" &&
     src.layout !== "matrix" &&
-    src.layout !== "freeform" &&
-    src.layout !== "diamond"
+    src.layout !== "freeform"
   ) {
     return {
       ok: false,
-      reason: `layout must be one of "grid" | "kanban" | "matrix" | "freeform" | "diamond" (got "${String(src.layout)}")`,
+      reason: `layout must be one of "grid" | "kanban" | "matrix" | "freeform" (got "${String(src.layout)}")`,
     };
   }
-  const layout = src.layout as "grid" | "kanban" | "matrix" | "freeform" | "diamond";
+  const layout = src.layout as "grid" | "kanban" | "matrix" | "freeform";
 
   // ── structuringPrompt: length + no op-name leak ────────────────────────────
   // Truncate long prompts (the agent tends to be verbose) rather than rejecting
@@ -158,7 +157,7 @@ export function validateFrameworkConfig(raw: unknown, existingIds: Iterable<stri
 
   return buildResult(layout);
 
-  function buildResult(effectiveLayout: "grid" | "kanban" | "matrix" | "freeform" | "diamond"): Result {
+  function buildResult(effectiveLayout: "grid" | "kanban" | "matrix" | "freeform"): Result {
 
     // ── Assemble ─────────────────────────────────────────────────────────────
     const config: FrameworkConfig = {

@@ -41,9 +41,9 @@ export const proposeFrameworkToolSchema = {
     },
     layout: {
       type: "string",
-      enum: ["grid", "kanban", "matrix", "freeform", "diamond"],
+      enum: ["grid", "kanban", "matrix", "freeform"],
       description:
-        "grid = sparse 2D (both axes dynamic, e.g. journey map). kanban = 1-axis categorization (1 row, e.g. card sort). matrix = fixed NxM dense (both axes meaningful, e.g. 2x2 priority). freeform = Miro-style canvas where the user positions cards anywhere; pick this for mind maps, brainstorms, or free-positioned canvases. diamond = Double Diamond visual (two adjacent diamonds); pick when the framework flows through diverge→converge phases (ideal with exactly 4 cols).",
+        "grid = sparse 2D (both axes dynamic, e.g. journey map). kanban = 1-axis categorization (1 row, e.g. card sort). matrix = fixed NxM dense (both axes meaningful, e.g. 2x2 priority). freeform = Miro-style canvas where the user positions cards anywhere; pick this for mind maps, brainstorms, Double Diamond, Venn, or any spatial framework — use shape cards (cards with meta.shapeKind='diamond' | 'rectangle' | 'circle') to draw geometric outlines behind content cards.",
     },
     colNoun: { type: "string", maxLength: 20, description: "Singular noun for a column (e.g. 'Stage', 'Competitor', 'Quadrant')." },
     rowNoun: { type: "string", maxLength: 20, description: "Singular noun for a row (e.g. 'Lane', 'Criterion', 'Dimension')." },

@@ -84,6 +84,23 @@ A card may have sub-items — short bullets rendered nested under the parent. Us
 
 **User intent overrides framework defaults.** Framework-specific prompts may describe a canonical shape ("2×2", "5 sections", etc.). Those are defaults, not hard rules. If the user explicitly asks to change the shape — "make this 3×3", "add a fifth phase", "turn this into a matrix" — do it. Emit the structural ops (addCol, addRow, etc.) the user asked for, even when the framework's convention is "fixed". A framework's value is in its labels and semantics, not its dimensions.
 
+## Shape Cards (freeform layout only)
+
+On **freeform** boards, cards can play two roles:
+
+- **Content cards** — regular text notes. Default.
+- **Shape cards** — cards with \`meta.shapeKind\` set. They render as editable geometric outlines BEHIND content cards and act as visual containers (Double Diamond's two diamonds, Ikigai's three circles, Kano's three bands, etc.).
+
+To create a shape card, emit \`addCard\` with meta that includes:
+- \`shapeKind\`: one of \`"diamond"\`, \`"rectangle"\`, \`"circle"\`, \`"ellipse"\`
+- \`x\`, \`y\`: pixel coords of the top-left of the shape's bounding box
+- \`shapeWidth\`, \`shapeHeight\`: bounding box size in pixels
+- The card's \`text\` becomes the shape's label.
+
+To nest content cards inside a shape, set their \`meta.x\`/\`meta.y\` so they fall within the shape's bounding box. Shapes and content cards share the same coordinate space.
+
+When reshaping a user's spatial framework, prefer adjusting shape card size/position over creating new shapes. Users can also drag, resize, and delete shapes directly.
+
 ## Focus Handling
 
 When a selection focus is provided (specific cards, a col, or a row), scope your changes to that selection unless the instruction explicitly demands a broader rebuild.

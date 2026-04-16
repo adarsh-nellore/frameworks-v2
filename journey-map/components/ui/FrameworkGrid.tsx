@@ -34,7 +34,6 @@ import { XAxisBand, YAxisBand } from "./grid/AxisSpine";
 import { SortableHandle } from "./grid/Sortable";
 import { SelectionToolbar } from "./grid/SelectionToolbar";
 import { FreeformLayout } from "./grid/FreeformLayout";
-import { DiamondLayout } from "./grid/DiamondLayout";
 
 type Props = {
   map: UniversalMap;
@@ -338,19 +337,6 @@ export function FrameworkGrid({
             onCardSelect={selectCard}
             onEditCard={editCard}
             onRemoveCard={removeCard}
-            commitOps={commitOps}
-          />
-        )}
-        {config.layout === "diamond" && (
-          <DiamondLayout
-            map={map}
-            config={config}
-            agentBusy={agentBusy}
-            selectedCardIds={selectedCardIds}
-            onCardSelect={selectCard}
-            onEditCard={editCard}
-            onRemoveCard={removeCard}
-            onAddCardAt={addCardAt}
             commitOps={commitOps}
           />
         )}

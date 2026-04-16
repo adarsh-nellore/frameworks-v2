@@ -34,13 +34,13 @@ export type FrameworkConfig = {
    *                Position is stored in card.meta.x / card.meta.y as stringified
    *                pixel coordinates. cols/rows still exist (used for grouping
    *                cards into semantic clusters + tool ops), but are rendered as
-   *                soft labels, not grid lines.
-   * - "diamond"  = Double Diamond visual (two adjacent diamond shapes). Works
-   *                best with exactly 4 cols; other shapes fall back to kanban
-   *                flow with diamond chrome. Cards stack vertically inside
-   *                each diamond phase (discover/define/develop/deliver style).
+   *                soft labels, not grid lines. Freeform also supports "shape
+   *                cards" — cards with meta.shapeKind that render as geometric
+   *                outlines (diamond, rectangle, circle) behind content cards.
+   *                Double Diamond and similar spatial frameworks compose from
+   *                shape cards + content cards on a freeform board.
    */
-  layout: "grid" | "kanban" | "matrix" | "freeform" | "diamond";
+  layout: "grid" | "kanban" | "matrix" | "freeform";
 
   // ── Vocabulary (used in prompts and UI labels) ──────────────────────────────
   colNoun: string;   // "Stage" | "Section" | "Competitor" | "Theme"
