@@ -19,21 +19,18 @@ import {
   loadCustomFrameworks,
   saveCustomFramework,
 } from "@/lib/frameworks/custom/registry";
-import type { Board, CanvasState } from "./types";
+import { parseSseFrames, type GenerateEvent } from "@/lib/pipeline/events";
+import type { Board, BoardStatus, CanvasState } from "./types";
 import { loadCanvasState, saveCanvasState } from "./storage";
 
 // ──────────────────────────────────────────────────────────────────────────────
-// CanvasContext — the single source of truth for the multi-board workspace.
+// CanvasContext — state + streaming generation for the multi-board workspace.
 //
-// Mounted once at the root (app/layout.tsx) so state survives route changes
-// between "/" (landing) and "/canvas" (workspace). A prompt submitted on the
-// landing page kicks off a board via addBoard(), then router.push("/canvas")
-// arrives with that board already in the context — no sessionStorage handoff.
-//
-// Hydration order matters: custom FrameworkConfigs must be re-registered into
-// the dynamic registry BEFORE boards that reference those ids mount, otherwise
-// BoardFrame → getFramework(board.frameworkId) throws. We do both in the same
-// initial effect, custom frameworks first.
+// Mounted once at app/layout.tsx so state survives navigation between "/" (the
+// prompt landing) and "/canvas" (the workspace). The landing calls
+// addBoard() + startDescribe()/startGenerate() and navigates immediately —
+// the stream keeps running in this provider while the user watches the
+// skeleton/overlay on /canvas.
 // ──────────────────────────────────────────────────────────────────────────────
 
 type AddBoardInput = {
@@ -44,6 +41,25 @@ type AddBoardInput = {
   x?: number;
   y?: number;
   makeActive?: boolean;
+  status?: BoardStatus;
+  pendingPrompt?: string;
+};
+
+export type PendingGenerate = {
+  boardId: string;
+  kind: "describe" | "generate";
+  lastEvent: GenerateEvent<UniversalMap> | null;
+  error: string | null;
+};
+
+export type GenerateStreamInput = {
+  frameworkId: string;
+  text?: string;
+  files?: File[];
+  urls?: string[];
+  title?: string;
+  persona?: string;
+  fidelityMode?: boolean;
 };
 
 type CanvasContextValue = CanvasState & {
@@ -55,8 +71,15 @@ type CanvasContextValue = CanvasState & {
   moveBoard: (id: string, x: number, y: number) => void;
   setBoardSelection: (id: string, selection: UniversalSelection | null) => void;
   setActiveBoardId: (id: string | null) => void;
-  /** Quota-exceeded flag — set to true the first time we can't persist. UI can
-   *  show a toast and stop nagging the user. */
+
+  /** Kick off a describe call for an existing (pending-describe) board. */
+  startDescribe: (boardId: string, description: string, existingIds: string[]) => Promise<void>;
+  /** Kick off a generate stream for an existing (pending-generate) board. */
+  startGenerate: (boardId: string, input: GenerateStreamInput) => Promise<void>;
+  /** Abort the in-flight generation if any. */
+  cancelPending: () => void;
+
+  pending: PendingGenerate | null;
   persistError: null | "quota" | "unknown";
 };
 
@@ -70,8 +93,6 @@ function nextOpenX(boards: Board[]): number {
   if (boards.length === 0) return 0;
   let maxRight = 0;
   for (const b of boards) {
-    // We don't track width on a Board yet (boards auto-size to content). This
-    // is a rough placement hint only; the user can drag boards later (Phase 4).
     const approxRight = b.x + 900;
     if (approxRight > maxRight) maxRight = approxRight;
   }
@@ -83,7 +104,8 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
   const [activeBoardId, setActive] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
   const [persistError, setPersistError] = useState<null | "quota" | "unknown">(null);
-  // Guard against persisting before hydration — would clobber stored state.
+  const [pending, setPending] = useState<PendingGenerate | null>(null);
+  const pendingAbortRef = useRef<AbortController | null>(null);
   const hydratedRef = useRef(false);
 
   useEffect(() => {
@@ -92,14 +114,20 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
 
     const loaded = loadCanvasState();
     if (loaded.ok) {
-      // Register any custom configs carried on the stored boards too — belt-and-
-      // braces in case saveCustomFramework wasn't called when a board was made.
       for (const b of loaded.boards) {
         if (b.customConfig && !isDynamicFramework(b.customConfig.id)) {
           registerDynamicFramework(b.customConfig);
         }
       }
-      setBoards(loaded.boards);
+      // Any pending boards carried over from a prior session are abandoned —
+      // the fetch is long gone, so downgrade them to ready with whatever seed
+      // they had. (User can start a new describe/generate if desired.)
+      const recovered = loaded.boards.map((b) =>
+        b.status === "pending-describe" || b.status === "pending-generate"
+          ? { ...b, status: "ready" as BoardStatus }
+          : b
+      );
+      setBoards(recovered);
       setActive(loaded.activeBoardId);
     }
     hydratedRef.current = true;
@@ -124,10 +152,10 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
       y: input.y ?? 0,
       map: input.map,
       selection: null,
+      status: input.status ?? "ready",
+      pendingPrompt: input.pendingPrompt,
       createdAt: Date.now(),
     };
-    // Ensure the dynamic registry has this custom framework so the renderer
-    // can resolve it immediately after we set state.
     if (input.customConfig) {
       if (!isDynamicFramework(input.customConfig.id)) {
         registerDynamicFramework(input.customConfig);
@@ -190,6 +218,146 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
     setActive(id);
   }, []);
 
+  const cancelPending = useCallback(() => {
+    pendingAbortRef.current?.abort();
+    pendingAbortRef.current = null;
+    setPending(null);
+  }, []);
+
+  // ── Streaming actions ───────────────────────────────────────────────────────
+  const startDescribe = useCallback(
+    async (boardId: string, description: string, existingIds: string[]) => {
+      if (!description.trim()) return;
+      setPending({ boardId, kind: "describe", lastEvent: null, error: null });
+      const ac = new AbortController();
+      pendingAbortRef.current = ac;
+      try {
+        const res = await fetch("/api/framework-describe", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ description: description.trim(), existingIds }),
+          signal: ac.signal,
+        });
+        const data = await res.json();
+        if (!res.ok || !data?.ok) {
+          throw new Error(data?.error ?? `Describe failed (HTTP ${res.status})`);
+        }
+        const config = data.config as FrameworkConfig;
+        const populatedMap = data.populatedMap as UniversalMap;
+        // Register the synthesized config + persist
+        if (!isDynamicFramework(config.id)) registerDynamicFramework(config);
+        saveCustomFramework(config);
+        // Upgrade the pending board to ready
+        setBoards((prev) =>
+          prev.map((b) =>
+            b.id === boardId
+              ? {
+                  ...b,
+                  frameworkId: config.id,
+                  customConfig: config,
+                  title: populatedMap.title || config.label,
+                  map: populatedMap,
+                  status: "ready",
+                  pendingPrompt: undefined,
+                }
+              : b
+          )
+        );
+        setPending(null);
+      } catch (e) {
+        if (e instanceof DOMException && e.name === "AbortError") {
+          setPending(null);
+          return;
+        }
+        const msg = e instanceof Error ? e.message : "Unknown error";
+        setPending({ boardId, kind: "describe", lastEvent: null, error: msg });
+      } finally {
+        pendingAbortRef.current = null;
+      }
+    },
+    []
+  );
+
+  const startGenerate = useCallback(
+    async (boardId: string, input: GenerateStreamInput) => {
+      setPending({ boardId, kind: "generate", lastEvent: null, error: null });
+      const ac = new AbortController();
+      pendingAbortRef.current = ac;
+      try {
+        const fd = new FormData();
+        fd.append("frameworkId", input.frameworkId);
+        if (input.text?.trim()) fd.append("text", input.text.trim());
+        (input.files ?? []).forEach((f, i) => fd.append(`file_${i}`, f));
+        (input.urls ?? []).forEach((u, i) => fd.append(`url_${i}`, u));
+        if (input.title?.trim()) fd.append("title", input.title.trim());
+        if (input.persona?.trim()) fd.append("persona", input.persona.trim());
+        fd.append("fidelityMode", input.fidelityMode ? "true" : "false");
+
+        const res = await fetch("/api/generate", {
+          method: "POST",
+          body: fd,
+          signal: ac.signal,
+        });
+        if (!res.ok || !res.body) {
+          throw new Error(`Generate failed (HTTP ${res.status})`);
+        }
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let finalMap: UniversalMap | null = null;
+        let errMsg: string | null = null;
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const { events, remainder } = parseSseFrames<UniversalMap>(buffer);
+          buffer = remainder;
+          for (const event of events) {
+            setPending((prev) =>
+              prev && prev.boardId === boardId
+                ? { ...prev, lastEvent: event }
+                : prev
+            );
+            if (event.phase === "result") {
+              finalMap = event.map;
+            } else if (event.phase === "error") {
+              errMsg = event.message;
+            }
+          }
+          if (finalMap || errMsg) break;
+        }
+
+        if (errMsg) throw new Error(errMsg);
+        if (!finalMap) throw new Error("Generation ended without a result");
+
+        setBoards((prev) =>
+          prev.map((b) =>
+            b.id === boardId
+              ? {
+                  ...b,
+                  map: finalMap!,
+                  title: finalMap!.title || b.title,
+                  status: "ready",
+                }
+              : b
+          )
+        );
+        setPending(null);
+      } catch (e) {
+        if (e instanceof DOMException && e.name === "AbortError") {
+          setPending(null);
+          return;
+        }
+        const msg = e instanceof Error ? e.message : "Unknown error";
+        setPending({ boardId, kind: "generate", lastEvent: null, error: msg });
+      } finally {
+        pendingAbortRef.current = null;
+      }
+    },
+    []
+  );
+
   const value = useMemo<CanvasContextValue>(
     () => ({
       boards,
@@ -203,6 +371,10 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
       moveBoard,
       setBoardSelection,
       setActiveBoardId,
+      startDescribe,
+      startGenerate,
+      cancelPending,
+      pending,
       persistError,
     }),
     [
@@ -217,6 +389,10 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
       moveBoard,
       setBoardSelection,
       setActiveBoardId,
+      startDescribe,
+      startGenerate,
+      cancelPending,
+      pending,
       persistError,
     ]
   );
@@ -230,9 +406,7 @@ export function useCanvas(): CanvasContextValue {
   return ctx;
 }
 
-/** Selector hook for copilot + topbar — returns only the active board.
- *  Still triggers a re-render when any board in the list updates; a full
- *  useSyncExternalStore migration is follow-up work if that becomes a problem. */
+/** Selector hook for copilot + topbar — returns only the active board. */
 export function useActiveBoard(): Board | null {
   const { boards, activeBoardId } = useCanvas();
   return useMemo(

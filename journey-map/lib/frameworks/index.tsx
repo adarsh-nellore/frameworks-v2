@@ -9,6 +9,7 @@ import {
 } from "./universal";
 import {
   affinityDiagramConfig,
+  catalogConfigs,
   competitiveMapConfig,
   journeyMapConfig,
   jtbdCanvasConfig,
@@ -69,6 +70,12 @@ const registry: Record<string, AnyFrameworkModule> = {
   [jtbdCanvasConfig.id]: makeModule(jtbdCanvasConfig),
   [competitiveMapConfig.id]: makeModule(competitiveMapConfig),
   [affinityDiagramConfig.id]: makeModule(affinityDiagramConfig),
+  // Catalog configs (~20) from configs/catalog.ts — BCG, SWOT, Eisenhower,
+  // Empathy Map, Stakeholder, Risk, Ansoff, Assumption, Wardley, Business
+  // Model Canvas, Lean Canvas, Value Prop Canvas, Service Blueprint, User
+  // Story Map, RACI, OKR, RICE, Porter's Five Forces, Double Diamond,
+  // Now/Next/Later, Hypothesis Board, SCAMPER.
+  ...Object.fromEntries(catalogConfigs.map((cfg) => [cfg.id, makeModule(cfg)])),
 };
 
 // Dynamic registry for user-generated custom frameworks. Populated at runtime

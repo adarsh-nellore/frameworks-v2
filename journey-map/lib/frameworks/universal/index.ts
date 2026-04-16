@@ -11,3 +11,4 @@ export { jtbdCanvasConfig } from "./configs/jtbd-canvas";
 export { matrix2x2Config } from "./configs/matrix-2x2";
 export { competitiveMapConfig } from "./configs/competitive-map";
 export { affinityDiagramConfig } from "./configs/affinity-diagram";
+export { catalogConfigs } from "./configs/catalog";

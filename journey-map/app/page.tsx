@@ -14,12 +14,21 @@ import {
 } from "lucide-react";
 import { FrameworkPills } from "@/components/FrameworkPills";
 import { useCanvas } from "@/lib/canvas/context";
-import { useGenerateStream } from "@/lib/hooks/use-generate-stream";
-import { useDescribeFramework } from "@/lib/hooks/use-describe-framework";
 import { listFrameworks, isDynamicFramework } from "@/lib/frameworks";
 import type { UniversalMap } from "@/lib/frameworks/universal/types";
 import type { FrameworkConfig } from "@/lib/frameworks/universal/config";
-import type { GenerateEvent } from "@/lib/pipeline/events";
+
+// Minimal empty map for the placeholder board while /api/framework-describe runs.
+// The canvas page renders a skeleton when board.status === "pending-describe",
+// so this map is never actually shown — it just needs to be a valid UniversalMap.
+const EMPTY_MAP: UniversalMap = {
+  id: "placeholder",
+  title: "",
+  meta: {},
+  cols: [],
+  rows: [],
+  cards: [],
+};
 
 const ACCEPTED_EXTS = [".pdf", ".docx", ".txt", ".md", ".json"];
 const ACCEPTED_ATTR = ACCEPTED_EXTS.join(",");
@@ -39,9 +48,8 @@ function formatBytes(n: number): string {
 
 export default function LandingPage() {
   const router = useRouter();
-  const { addBoard, boards } = useCanvas();
+  const { addBoard, boards, startDescribe, startGenerate } = useCanvas();
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [progressEvent, setProgressEvent] = useState<GenerateEvent<UniversalMap> | null>(null);
   const [mounted, setMounted] = useState(false);
   const [isNarrow, setIsNarrow] = useState(false);
 
@@ -62,13 +70,6 @@ export default function LandingPage() {
 
   const existingIds = useMemo(() => listFrameworks().map((fw) => fw.id), []);
 
-  const describe = useDescribeFramework();
-  const generate = useGenerateStream({
-    onProgress: setProgressEvent,
-  });
-
-  const busy = describe.busy || generate.busy;
-
   useEffect(() => {
     setMounted(true);
     const check = () => setIsNarrow(window.innerWidth < 720);
@@ -85,7 +86,7 @@ export default function LandingPage() {
 
   const totalBytes = files.reduce((s, f) => s + f.size, 0) + text.length;
   const sourcesCount = (text.trim() ? 1 : 0) + files.length + urls.length;
-  const canSubmit = !busy && sourcesCount > 0 && totalBytes <= MAX_TOTAL_BYTES;
+  const canSubmit = sourcesCount > 0 && totalBytes <= MAX_TOTAL_BYTES;
 
   function acceptFiles(incoming: FileList | File[]) {
     const next: File[] = [...files];
@@ -131,7 +132,7 @@ export default function LandingPage() {
     setUrls((curr) => curr.filter((_, idx) => idx !== i));
   }
 
-  async function handleSubmit() {
+  function handleSubmit() {
     if (!canSubmit) return;
     setLocalError(null);
 
@@ -144,15 +145,17 @@ export default function LandingPage() {
         setLocalError("Pick a framework to generate from uploaded files. The custom (prompt-only) flow can't read files yet.");
         return;
       }
-      const result = await describe.submit(text, existingIds);
-      if (!result) return;
+      // Fire-and-forget: create a pending board, start describe, navigate now.
+      // The context streams results into the board while /canvas renders the skeleton.
       const board = addBoard({
-        frameworkId: result.config.id,
-        customConfig: result.config,
-        title: result.populatedMap.title || result.config.label,
-        map: result.populatedMap,
+        frameworkId: "journey-map", // placeholder — canvas ignores it while pending
+        title: (title || text.slice(0, 60)).trim() || "New framework",
+        map: EMPTY_MAP,
+        status: "pending-describe",
+        pendingPrompt: text,
         makeActive: true,
       });
+      void startDescribe(board.id, text, existingIds);
       router.push(`/canvas?b=${board.id}`);
       return;
     }
@@ -160,7 +163,16 @@ export default function LandingPage() {
     const fw = listFrameworks().find((f) => f.id === selectedId);
     if (!fw) return;
 
-    const result = await generate.submit({
+    const board = addBoard({
+      frameworkId: fw.id,
+      customConfig: isDynamicFramework(fw.id) ? (fw.config as FrameworkConfig) : undefined,
+      title: title || fw.seed.title || fw.label,
+      map: fw.seed,
+      status: "pending-generate",
+      pendingPrompt: text,
+      makeActive: true,
+    });
+    void startGenerate(board.id, {
       frameworkId: fw.id,
       text: hasText ? text : undefined,
       files,
@@ -168,15 +180,6 @@ export default function LandingPage() {
       title: title || undefined,
       persona: persona || undefined,
       fidelityMode,
-    });
-    if (!result) return;
-
-    const board = addBoard({
-      frameworkId: fw.id,
-      customConfig: isDynamicFramework(fw.id) ? (fw.config as FrameworkConfig) : undefined,
-      title: result.map.title || title || fw.seed.title || fw.label,
-      map: result.map,
-      makeActive: true,
     });
     router.push(`/canvas?b=${board.id}`);
   }
@@ -202,8 +205,9 @@ export default function LandingPage() {
     );
   }
 
-  const combinedError = localError || describe.error || generate.error;
+  const combinedError = localError;
   const selectedFramework = selectedId ? listFrameworks().find((fw) => fw.id === selectedId) : null;
+  const busy = false; // generation now runs in the canvas route, not the landing
 
   return (
     <main className="fixed inset-0 overflow-hidden">
@@ -226,10 +230,12 @@ export default function LandingPage() {
         </button>
       )}
 
-      {/* Centered prompt area — scrolls when advanced options expand past the viewport */}
-      <div className="h-full overflow-y-auto chat-scroll">
-        <div className="min-h-full flex items-center justify-center px-6 py-16">
-          <div className="w-full max-w-[720px] space-y-5">
+      {/* Layout: prompt centered in the upper 2/3, framework pills anchored to the
+          bottom. Keeps the prompt the hero while the pills read as a secondary
+          quick-picker toolbar below it. */}
+      <div className="h-full grid grid-rows-[1fr_auto] overflow-hidden">
+        <div className="flex items-center justify-center px-6 pt-16 pb-6 overflow-y-auto chat-scroll">
+          <div className="w-full max-w-[720px] space-y-4">
           {/* Prompt box (glassmorphic) */}
           <div
             onDragOver={(e) => {
@@ -437,10 +443,7 @@ export default function LandingPage() {
             </div>
           </div>
 
-          {/* Framework pills — search + selectable chips */}
-          <FrameworkPills selectedId={selectedId} onSelect={setSelectedId} />
-
-          {/* Advanced options — collapsible */}
+          {/* Advanced options — collapsible (sits right under the prompt for density) */}
           <div className="flex items-center justify-center">
             <button
               type="button"
@@ -488,49 +491,21 @@ export default function LandingPage() {
             </div>
           )}
 
-          {/* Progress / errors */}
-          {busy && (
-            <div className="glass rounded-xl px-4 py-3 text-[12px] text-ink-secondary inline-flex items-center gap-3 mx-auto">
-              <span className="inline-flex items-center gap-1">
-                <span className="h-1.5 w-1.5 rounded-full bg-ink-primary/60 animate-pulse [animation-delay:0ms]" />
-                <span className="h-1.5 w-1.5 rounded-full bg-ink-primary/60 animate-pulse [animation-delay:150ms]" />
-                <span className="h-1.5 w-1.5 rounded-full bg-ink-primary/60 animate-pulse [animation-delay:300ms]" />
-              </span>
-              <span>{currentProgressCopy(progressEvent, describe.busy)}</span>
-            </div>
-          )}
-          {combinedError && !busy && (
+          {combinedError && (
             <div className="glass rounded-xl px-4 py-3 text-[12px] text-rose-900 bg-rose-50/80 border border-rose-100">
               {combinedError}
             </div>
           )}
           </div>
         </div>
+
+        {/* Framework pills — anchored to the bottom as a quick-picker toolbar */}
+        <div className="px-6 pb-8">
+          <div className="w-full max-w-[880px] mx-auto">
+            <FrameworkPills selectedId={selectedId} onSelect={setSelectedId} />
+          </div>
+        </div>
       </div>
     </main>
   );
-}
-
-function currentProgressCopy(
-  ev: GenerateEvent<UniversalMap> | null,
-  describing: boolean
-): string {
-  if (describing) return "Designing framework structure and filling in content…";
-  if (!ev) return "Preparing…";
-  switch (ev.phase) {
-    case "ingesting":
-      return "Reading source material…";
-    case "subject_id":
-      return "Identifying the subject…";
-    case "extracting":
-      return "Extracting key details…";
-    case "synthesizing":
-      return "Structuring into a framework…";
-    case "critiquing":
-      return "Critiquing output quality…";
-    case "revising":
-      return "Revising based on critique…";
-    default:
-      return "Working…";
-  }
 }

@@ -30,6 +30,7 @@ import type { FrameworkConfig } from "@/lib/frameworks/universal/config";
 import type { UniversalMap } from "@/lib/frameworks/universal/types";
 import { ZoomProvider, useZoom } from "@/lib/zoom-context";
 import { useCanvas, useActiveBoard } from "@/lib/canvas/context";
+import { PendingBoardSkeleton } from "@/components/PendingBoardSkeleton";
 
 export default function CanvasPage() {
   return (
@@ -40,7 +41,17 @@ export default function CanvasPage() {
 }
 
 function CanvasPageInner() {
-  const { hydrated, boards, activeBoardId, addBoard, updateBoardMap, updateBoardTitle, setBoardSelection } = useCanvas();
+  const {
+    hydrated,
+    boards,
+    activeBoardId,
+    addBoard,
+    updateBoardMap,
+    updateBoardTitle,
+    setBoardSelection,
+    pending,
+    cancelPending,
+  } = useCanvas();
   const activeBoard = useActiveBoard();
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -194,7 +205,54 @@ function CanvasPageInner() {
     );
   }
 
-  if (!activeBoard || !framework) {
+  if (!activeBoard) {
+    return <div className="fixed inset-0" />;
+  }
+
+  const isPendingDescribe = activeBoard.status === "pending-describe";
+  const isPendingGenerate = activeBoard.status === "pending-generate";
+  const pendingForActive = pending && pending.boardId === activeBoard.id ? pending : null;
+
+  // If the active board is waiting for describe, we render the skeleton and
+  // skip the framework renderer entirely (the board's frameworkId is a
+  // placeholder until describe resolves).
+  if (isPendingDescribe) {
+    return (
+      <div className="fixed inset-0">
+        <Canvas locked>
+          <div ref={stageRef} className="p-12">
+            <PendingBoardSkeleton
+              title={activeBoard.title || "Designing framework…"}
+              prompt={activeBoard.pendingPrompt}
+              statusLabel={
+                pendingForActive?.error
+                  ? "Error"
+                  : "Designing structure and filling in content…"
+              }
+            />
+          </div>
+        </Canvas>
+
+        <GenerationOverlay
+          active={!pendingForActive?.error}
+          progress={null}
+          onCancel={() => {
+            cancelPending();
+          }}
+          frameworkLabel="your framework"
+        />
+
+        {pendingForActive?.error && (
+          <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 glass rounded-xl px-4 py-3 text-[13px] text-rose-900 bg-rose-50/80 border border-rose-100 max-w-md">
+            {pendingForActive.error}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // For pending-generate OR ready boards we need the framework component.
+  if (!framework) {
     return <div className="fixed inset-0" />;
   }
 
@@ -202,7 +260,7 @@ function CanvasPageInner() {
 
   return (
     <div className="fixed inset-0">
-      <Canvas locked={generationActive}>
+      <Canvas locked={generationActive || isPendingGenerate}>
         <div ref={stageRef} className="p-12">
           <div
             data-map-page
@@ -215,7 +273,7 @@ function CanvasPageInner() {
             <Component
               map={activeBoard.map}
               onChange={(next) => updateBoardMap(activeBoard.id, next)}
-              busy={busy}
+              busy={busy || isPendingGenerate}
               selection={activeBoard.selection}
               onSelectionChange={(sel) =>
                 setBoardSelection(activeBoard.id, (sel ?? null) as never)
@@ -308,11 +366,20 @@ function CanvasPageInner() {
       <ZoomControls onFit={fitNow} />
 
       <GenerationOverlay
-        active={generationActive}
-        progress={generation}
-        onCancel={onGenerationCancel}
+        active={generationActive || isPendingGenerate}
+        progress={pendingForActive?.lastEvent ?? generation}
+        onCancel={() => {
+          if (isPendingGenerate) cancelPending();
+          else onGenerationCancel();
+        }}
         frameworkLabel={framework.label}
       />
+
+      {pendingForActive?.error && (
+        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 glass rounded-xl px-4 py-3 text-[13px] text-rose-900 bg-rose-50/80 border border-rose-100 max-w-md">
+          {pendingForActive.error}
+        </div>
+      )}
     </div>
   );
 }
