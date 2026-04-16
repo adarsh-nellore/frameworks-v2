@@ -7,15 +7,12 @@ import {
   useReducedMotion,
 } from "framer-motion";
 import { ArrowUp, RotateCcw, Sparkles } from "lucide-react";
-import type {
-  JourneyMap,
-  JourneyMapSelection,
-} from "@/lib/frameworks/journey-map/types";
-import type { Op } from "@/lib/frameworks/journey-map/ops";
-import { applyOps } from "@/lib/frameworks/journey-map/ops";
 import { kindTheme } from "@/lib/row-kind-theme";
 import { GeneratePanel } from "@/components/GeneratePanel";
 import type { GenerateEvent } from "@/lib/pipeline/events";
+import type { JourneyMap, JourneyMapSelection } from "@/lib/frameworks/journey-map/types";
+import { applyOps } from "@/lib/frameworks/journey-map/ops";
+import type { Op } from "@/lib/frameworks/journey-map/ops";
 
 type Props = {
   frameworkId: string;

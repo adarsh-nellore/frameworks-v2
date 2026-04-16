@@ -110,6 +110,8 @@ export function StageHeader({
       {...(editing ? {} : sortable.attributes)}
     >
       <div
+        data-stage-face
+        {...(isSelected ? { "data-stage-sel": "" } : {})}
         className={[
           "px-3.5 py-2.5 rounded-lg flex items-center gap-2.5 min-h-[40px] select-none",
           "transition-[background-color,border-color] duration-150",
@@ -120,6 +122,7 @@ export function StageHeader({
         ].join(" ")}
       >
         <span
+          data-stage-step
           className={[
             "font-mono text-[10px] tabular-nums tracking-[0.18em] shrink-0",
             isSelected ? "text-white/60" : "text-ink-muted",
@@ -151,6 +154,7 @@ export function StageHeader({
           />
         ) : (
           <span
+            data-stage-title
             className={[
               "min-w-0 truncate font-sans text-[13px] font-medium tracking-tight",
               isSelected ? "text-white" : "text-ink-primary",

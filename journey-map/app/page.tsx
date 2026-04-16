@@ -13,15 +13,14 @@ import { Copilot } from "@/components/Copilot";
 import { GenerationOverlay } from "@/components/GenerationOverlay";
 import { TopBar } from "@/components/TopBar";
 import { ZoomControls } from "@/components/ZoomControls";
-import { getFramework } from "@/lib/frameworks";
-import type {
-  JourneyMap as JM,
-  JourneyMapSelection,
-} from "@/lib/frameworks/journey-map/types";
+import { getFramework, listFrameworks } from "@/lib/frameworks";
+import type { AnyFrameworkModule } from "@/lib/frameworks";
+import type { JourneyMapSelection } from "@/lib/frameworks/journey-map/types";
 import type { GenerateEvent } from "@/lib/pipeline/events";
 import { ZoomProvider, useZoom } from "@/lib/zoom-context";
 
-const FRAMEWORK_ID = "journey-map";
+const DEFAULT_FRAMEWORK_ID = "journey-map";
+const STORAGE_KEY = "framework-id";
 
 export default function Page() {
   return (
@@ -32,14 +31,54 @@ export default function Page() {
 }
 
 function PageInner() {
-  const framework = getFramework(FRAMEWORK_ID);
-  const [map, setMap] = useState<JM>(framework.seed as JM);
-  const [selection, setSelection] = useState<JourneyMapSelection | null>(null);
+  const [frameworkId, setFrameworkId] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const urlFw = params.get("framework");
+      if (urlFw) {
+        try { getFramework(urlFw); return urlFw; } catch { /* fall through */ }
+      }
+      const stored = sessionStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        try { getFramework(stored); return stored; } catch { /* fall through */ }
+      }
+    }
+    return DEFAULT_FRAMEWORK_ID;
+  });
+
+  const framework = getFramework(frameworkId);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [map, setMap] = useState<any>(framework.seed);
+  const [selection, setSelection] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
-  const [generation, setGeneration] = useState<GenerateEvent<JM> | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [generation, setGeneration] = useState<GenerateEvent<any> | null>(null);
   const cancelGenerationRef = useRef<(() => void) | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const { fitToContent } = useZoom();
+  const [frameworkMenuOpen, setFrameworkMenuOpen] = useState(false);
+
+  // Persist selected framework to session storage and URL
+  useEffect(() => {
+    sessionStorage.setItem(STORAGE_KEY, frameworkId);
+    const url = new URL(window.location.href);
+    if (frameworkId !== DEFAULT_FRAMEWORK_ID) {
+      url.searchParams.set("framework", frameworkId);
+    } else {
+      url.searchParams.delete("framework");
+    }
+    window.history.replaceState(null, "", url.toString());
+  }, [frameworkId]);
+
+  function switchFramework(fw: AnyFrameworkModule) {
+    setFrameworkMenuOpen(false);
+    if (fw.id === frameworkId) return;
+    setFrameworkId(fw.id);
+    setMap(fw.seed);
+    setSelection(null);
+    setGeneration(null);
+  }
 
   const generationActive =
     generation !== null &&
@@ -55,50 +94,11 @@ function PageInner() {
     setGeneration(null);
   }, []);
 
-  const Component = framework.Component as React.ComponentType<{
-    map: JM;
-    onChange: (next: JM) => void;
-    busy?: boolean;
-    selection: JourneyMapSelection | null;
-    onSelectionChange: (next: JourneyMapSelection | null) => void;
-  }>;
-
-  // Drop selection ids that no longer exist after agent / user edits.
-  useEffect(() => {
-    setSelection((sel) => {
-      if (!sel) return null;
-      if (sel.type === "blocks") {
-        const valid = sel.ids.filter((id) => map.cells.some((c) => c.id === id));
-        if (
-          valid.length === sel.ids.length &&
-          valid.every((id, i) => id === sel.ids[i])
-        )
-          return sel;
-        return valid.length ? { type: "blocks", ids: valid } : null;
-      }
-      if (sel.type === "row") {
-        return map.rows.some((r) => r.id === sel.id) ? sel : null;
-      }
-      const valid = sel.stageIds.filter((id) =>
-        map.stages.some((s) => s.id === id)
-      );
-      const ordered = map.stages
-        .map((s) => s.id)
-        .filter((id) => valid.includes(id));
-      if (
-        ordered.length === sel.stageIds.length &&
-        ordered.every((id, i) => id === sel.stageIds[i])
-      )
-        return sel;
-      return ordered.length ? { type: "stages", stageIds: ordered } : null;
-    });
-  }, [map]);
+  const Component = framework.Component;
 
   const fitNow = useCallback(() => {
     const node = stageRef.current;
     if (!node) return;
-    // scrollWidth/scrollHeight are unaffected by the canvas's CSS transform,
-    // so they give us the natural (unscaled) content size we need to fit.
     fitToContent(
       { width: node.scrollWidth, height: node.scrollHeight },
       { width: window.innerWidth, height: window.innerHeight },
@@ -106,29 +106,37 @@ function PageInner() {
     );
   }, [fitToContent]);
 
-  // Re-fit when the map changes shape (rows/stages count) so the framework
-  // stays nicely framed after the agent reshapes it. Cell-text edits don't
-  // change geometry, so we only refit on row/stage count changes.
-  const sigRef = useRef("");
+  // Re-fit when we switch frameworks
+  const prevFrameworkId = useRef(frameworkId);
   useLayoutEffect(() => {
-    const sig = `${map.rows.length}x${map.stages.length}`;
-    if (sig === sigRef.current) return;
-    sigRef.current = sig;
-    requestAnimationFrame(fitNow);
-  }, [map.rows.length, map.stages.length, fitNow]);
+    if (prevFrameworkId.current !== frameworkId) {
+      prevFrameworkId.current = frameworkId;
+      requestAnimationFrame(fitNow);
+    }
+  }, [frameworkId, fitNow]);
 
-  // Re-fit on viewport resize so things stay centered.
   useEffect(() => {
     const onResize = () => fitNow();
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, [fitNow]);
 
+  // Close framework menu on outside click
+  useEffect(() => {
+    if (!frameworkMenuOpen) return;
+    function handler(e: MouseEvent) {
+      const t = e.target as Element | null;
+      if (!t?.closest("[data-framework-menu]")) setFrameworkMenuOpen(false);
+    }
+    document.addEventListener("pointerdown", handler);
+    return () => document.removeEventListener("pointerdown", handler);
+  }, [frameworkMenuOpen]);
+
   const onTitleChange = useCallback((title: string) => {
-    setMap((m) => ({ ...m, title }));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    setMap((m: any) => ({ ...m, title }));
   }, []);
 
-  // Hydrate saved theme + optional raw `--var` map from a design-token bundle.
   useLayoutEffect(() => {
     try {
       const raw = loadStoredThemeJson();
@@ -136,9 +144,7 @@ function PageInner() {
         try {
           const parsed = parseThemeImport(JSON.parse(raw) as unknown);
           if (parsed.ok) applyTheme(parsed.theme);
-        } catch {
-          /* ignore corrupt storage */
-        }
+        } catch { /* ignore corrupt storage */ }
       }
       const extra = loadStoredDesignTokenCssVarsJson();
       if (extra) {
@@ -154,6 +160,8 @@ function PageInner() {
       applyDesignTokenCssVars(undefined);
     }
   }, []);
+
+  const allFrameworks = listFrameworks();
 
   return (
     <div className="fixed inset-0">
@@ -178,8 +186,41 @@ function PageInner() {
         </div>
       </Canvas>
 
+      {/* Framework switcher — fixed bottom-left */}
+      <div
+        data-framework-menu
+        className="fixed bottom-4 left-4 z-40"
+      >
+        {frameworkMenuOpen && (
+          <div className="mb-2 flex flex-col gap-1 rounded-xl bg-white shadow-lg ring-1 ring-slate-200 p-1.5">
+            {allFrameworks.map((fw) => (
+              <button
+                key={fw.id}
+                onClick={() => switchFramework(fw)}
+                className={[
+                  "rounded-lg px-3 py-2 text-left text-sm transition",
+                  fw.id === frameworkId
+                    ? "bg-indigo-100 text-indigo-700 font-medium"
+                    : "text-slate-700 hover:bg-slate-100",
+                ].join(" ")}
+              >
+                {fw.label}
+              </button>
+            ))}
+          </div>
+        )}
+        <button
+          onClick={() => setFrameworkMenuOpen((o) => !o)}
+          className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-md ring-1 ring-slate-200 hover:ring-slate-300 transition"
+        >
+          <span className="text-slate-400">⊞</span>
+          {framework.label}
+          <span className="text-slate-400 text-xs">{frameworkMenuOpen ? "▲" : "▼"}</span>
+        </button>
+      </div>
+
       <TopBar
-        title={map.title}
+        title={map.title ?? ""}
         onTitleChange={onTitleChange}
         map={map}
         exportLocked={generationActive}
@@ -191,7 +232,7 @@ function PageInner() {
         onMapChange={setMap}
         exampleInstructions={framework.exampleInstructions}
         onBusyChange={setBusy}
-        focus={selection}
+        focus={selection as JourneyMapSelection | null}
         onFocusClear={() => setSelection(null)}
         onGenerationProgress={setGeneration}
         registerGenerationCancel={registerCancel}

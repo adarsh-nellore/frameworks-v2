@@ -402,6 +402,7 @@ export function JourneyMap({
                 type="button"
                 onClick={onAddStage}
                 disabled={agentBusy}
+                data-add-ctrl
                 className="ml-2 h-8 w-8 rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 hover:text-slate-700 shrink-0 disabled:opacity-50"
                 aria-label="Add stage"
                 title="Add stage"
@@ -427,6 +428,9 @@ export function JourneyMap({
                           : "",
                       ].join(" ")}
                       data-row-shell
+                      {...(selection?.type === "row" && selection.id === row.id
+                        ? { "data-row-sel": "" }
+                        : {})}
                     >
                       <div className="shrink-0" style={{ width: LABEL_W }}>
                         <RowLabel
@@ -520,6 +524,7 @@ export function JourneyMap({
                   type="button"
                   onClick={onAddRow}
                   disabled={agentBusy}
+                  data-add-ctrl
                   className="h-8 w-8 rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 hover:text-slate-700 disabled:opacity-50"
                   aria-label="Add row"
                   title="Add row"

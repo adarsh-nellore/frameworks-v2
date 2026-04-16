@@ -35,11 +35,64 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
+/**
+ * Strip interactive-only UI chrome from a cloned DOM tree so the export
+ * looks like clean, presentation-ready content:
+ *
+ *  - Empty slot placeholders (dashed "+" boxes)    → invisible, keep as spacers
+ *  - Add-row / add-stage + buttons                 → fully hidden
+ *  - Selected card rings / row highlight / stage   → reset to idle appearance
+ */
+function cleanCloneForExport(root: HTMLElement): void {
+  // 1. Hide empty-slot placeholder boxes while keeping their layout space so
+  //    columns stay aligned with their stage headers.
+  root.querySelectorAll<HTMLElement>("[data-empty-slot]").forEach((el) => {
+    el.style.visibility = "hidden";
+    el.style.border = "none";
+  });
+
+  // 2. Remove the interactive + buttons (add row / add stage).
+  root.querySelectorAll<HTMLElement>("[data-add-ctrl]").forEach((el) => {
+    el.style.display = "none";
+  });
+
+  // 3. Reset selected card face: clear ring (which is box-shadow in Tailwind)
+  //    and restore a neutral idle border so the card looks unselected.
+  root.querySelectorAll<HTMLElement>("[data-card-sel]").forEach((el) => {
+    el.style.boxShadow =
+      "0 1px 3px 0 rgb(0 0 0 / 0.07), 0 1px 2px -1px rgb(0 0 0 / 0.05)";
+    el.style.outline = "none";
+    el.style.borderColor = "rgba(0,0,0,0.08)";
+  });
+
+  // 4. Reset row-shell selection (background tint + ring).
+  root.querySelectorAll<HTMLElement>("[data-row-sel]").forEach((el) => {
+    el.style.backgroundColor = "transparent";
+    el.style.boxShadow = "none";
+    el.style.outline = "none";
+  });
+
+  // 5. Reset selected stage header: dark-filled → idle white.
+  root.querySelectorAll<HTMLElement>("[data-stage-sel]").forEach((el) => {
+    el.style.backgroundColor = "#ffffff";
+    el.style.borderColor = "rgba(0,0,0,0.08)";
+    // Restore step number (muted) and title (dark) text colours.
+    const step = el.querySelector<HTMLElement>("[data-stage-step]");
+    const title = el.querySelector<HTMLElement>("[data-stage-title]");
+    if (step) step.style.color = "rgba(0,0,0,0.35)";
+    if (title) title.style.color = "#111827";
+  });
+}
+
 function createCloneContainer(target: HTMLElement): {
   clone: HTMLElement;
   cleanup: () => void;
 } {
   const clone = target.cloneNode(true) as HTMLElement;
+
+  // Clean interactive chrome before rendering.
+  cleanCloneForExport(clone);
+
   const wrapper = document.createElement("div");
   wrapper.style.position = "fixed";
   wrapper.style.left = "-100000px";

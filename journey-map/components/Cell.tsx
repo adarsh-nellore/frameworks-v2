@@ -144,6 +144,10 @@ export function Cell({
       {...(editing ? {} : draggable.attributes)}
     >
       <div
+        data-card-face
+        {...((isSelected || isRowSelected || isColumnSelected) && !isGhost
+          ? { "data-card-sel": "" }
+          : {})}
         className={[
           "group relative min-h-[176px] rounded-xl border",
           "flex flex-col p-3 pl-3.5 select-none",
