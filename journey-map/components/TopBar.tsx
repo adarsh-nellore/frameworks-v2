@@ -2,7 +2,6 @@
 
 import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
-import type { JourneyMap } from "@/lib/frameworks/journey-map/types";
 
 const ThemeMenu = dynamic(
   () => import("@/components/ThemeMenu").then((m) => ({ default: m.ThemeMenu })),
@@ -34,7 +33,8 @@ const ExportMenu = dynamic(
 type Props = {
   title: string;
   onTitleChange: (title: string) => void;
-  map: JourneyMap;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  map: any;
   exportLocked?: boolean;
 };
 

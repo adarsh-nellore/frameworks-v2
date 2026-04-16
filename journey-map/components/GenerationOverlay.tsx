@@ -8,6 +8,8 @@ type Props = {
   active: boolean;
   progress: GenerateEvent | null;
   onCancel?: () => void;
+  /** Human-readable framework label, e.g. "JTBD Canvas". */
+  frameworkLabel?: string;
 };
 
 type Step = {
@@ -15,14 +17,16 @@ type Step = {
   label: string;
 };
 
-const FULL_SCHEDULE: Step[] = [
-  { phase: "ingesting", label: "Reading sources" },
-  { phase: "subject_id", label: "Identifying subject and journey topic" },
-  { phase: "extracting", label: "Extracting research from each source" },
-  { phase: "synthesizing", label: "Synthesizing the journey map" },
-  { phase: "critiquing", label: "Reviewing for fidelity" },
-  { phase: "revising", label: "Revising for higher fidelity" },
-];
+function buildSchedule_label(frameworkLabel: string): Step[] {
+  return [
+    { phase: "ingesting", label: "Reading sources" },
+    { phase: "subject_id", label: "Identifying subject and topic" },
+    { phase: "extracting", label: "Extracting atoms from each source" },
+    { phase: "synthesizing", label: `Structuring the ${frameworkLabel.toLowerCase()}` },
+    { phase: "critiquing", label: "Reviewing for fidelity" },
+    { phase: "revising", label: "Revising for higher fidelity" },
+  ];
+}
 
 const PHASE_ORDER: Record<Step["phase"], number> = {
   ingesting: 0,
@@ -33,36 +37,24 @@ const PHASE_ORDER: Record<Step["phase"], number> = {
   revising: 5,
 };
 
-function buildSchedule(progress: GenerateEvent | null): Step[] {
+function buildSchedule(progress: GenerateEvent | null, frameworkLabel: string): Step[] {
+  const full = buildSchedule_label(frameworkLabel);
   // Always show ingesting + subject_id + synthesizing.
   // Show extracting only if we have evidence the pipeline went two-pass.
   // Show critiquing + revising only if we have evidence those phases ran.
   const seen = new Set<Step["phase"]>(["ingesting", "subject_id", "synthesizing"]);
   if (progress) {
-    if (
-      progress.phase === "extracting" ||
-      // Heuristic: if synthesizing event arrived after extracting, we'd already
-      // have added it. We can't infer mode otherwise from a single event, but
-      // the route emits extracting before synthesizing in two-pass.
-      false
-    ) {
+    if (progress.phase === "extracting") {
       seen.add("extracting");
     }
-    if (
-      progress.phase === "critiquing" ||
-      progress.phase === "revising" ||
-      // If a result includes critiqueRan flag we'd see it, but result also
-      // unmounts the overlay so we don't bother.
-      false
-    ) {
+    if (progress.phase === "critiquing" || progress.phase === "revising") {
       seen.add("critiquing");
     }
     if (progress.phase === "revising") {
       seen.add("revising");
     }
   }
-  // Order intact:
-  return FULL_SCHEDULE.filter((s) => seen.has(s.phase));
+  return full.filter((s) => seen.has(s.phase));
 }
 
 function stepStatus(
@@ -109,9 +101,9 @@ function truncate(s: string, max: number): string {
   return s.slice(0, max - 1) + "…";
 }
 
-export function GenerationOverlay({ active, progress, onCancel }: Props) {
+export function GenerationOverlay({ active, progress, onCancel, frameworkLabel = "map" }: Props) {
   const reduce = useReducedMotion();
-  const schedule = buildSchedule(progress);
+  const schedule = buildSchedule(progress, frameworkLabel);
   const isError = progress?.phase === "error";
 
   return (
@@ -138,12 +130,12 @@ export function GenerationOverlay({ active, progress, onCancel }: Props) {
             <div className="flex items-center justify-between mb-4">
               <div>
                 <div className="font-mono text-[9px] tracking-[0.22em] uppercase text-ink-muted">
-                  {isError ? "Generation failed" : "Generating journey map"}
+                  {isError ? "Generation failed" : `Generating ${frameworkLabel}`}
                 </div>
                 <div className="text-[15px] font-medium text-ink-primary mt-0.5">
                   {isError
                     ? "Something went wrong"
-                    : currentStepLabel(progress)}
+                    : currentStepLabel(progress, frameworkLabel)}
                 </div>
               </div>
               {onCancel && !isError && (
@@ -222,7 +214,8 @@ export function GenerationOverlay({ active, progress, onCancel }: Props) {
   );
 }
 
-function currentStepLabel(progress: GenerateEvent | null): string {
+function currentStepLabel(progress: GenerateEvent | null, frameworkLabel: string): string {
+  const fw = frameworkLabel.toLowerCase();
   if (!progress) return "Getting started…";
   switch (progress.phase) {
     case "ingesting":
@@ -232,13 +225,13 @@ function currentStepLabel(progress: GenerateEvent | null): string {
     case "extracting":
       return "Extracting research…";
     case "synthesizing":
-      return "Designing the map…";
+      return `Structuring the ${fw}…`;
     case "critiquing":
       return progress.fidelity_score !== undefined
         ? "Critique complete"
         : "Reviewing fidelity…";
     case "revising":
-      return "Refining the map…";
+      return `Refining the ${fw}…`;
     case "result":
       return "Done";
     case "error":

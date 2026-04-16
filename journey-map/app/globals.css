@@ -26,6 +26,16 @@
   --border-soft: 232 232 234;     /* #e8e8ea */
   --border-medium: 212 212 214;   /* #d4d4d6 */
 
+  /* Accent — single brand color used for selection rings, primary buttons,
+     focus, and the optional card accent stripe. Overridden by design system
+     import. Defaults to an indigo kin to the journey-map stakeholders lane. */
+  --accent: 79 70 229;
+
+  /* Corner radii (overridable by design system import) */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+
   /* Shared shadow tint (overridable by theme JSON) */
   --shadow-tint: 40 42 47;
   --shadow-card: 0 1px 2px rgb(var(--shadow-tint) / 0.04);
@@ -136,6 +146,180 @@
   --lane-neutral-chip-text: 51 65 85;
   --lane-neutral-highlight-bg: 226 232 240;
   --lane-neutral-highlight-text: 15 23 42;
+
+  /* ── Extended lane kinds for cross-framework parity ──────────────────────
+   * JTBD section kinds, affinity card-type kinds, competitive role kinds, and
+   * 2x2 matrix quadrant accents. Same 7-token pattern as the journey-map
+   * lanes above so kindTheme() lights every framework consistently.
+   */
+
+  /* JTBD: functional_jobs (slate-cool blue) */
+  --lane-functional_jobs-accent: 14 116 144;
+  --lane-functional_jobs-border: 103 232 249;
+  --lane-functional_jobs-tint: 240 253 255;
+  --lane-functional_jobs-chip-bg: 207 250 254;
+  --lane-functional_jobs-chip-text: 21 94 117;
+  --lane-functional_jobs-highlight-bg: 165 243 252;
+  --lane-functional_jobs-highlight-text: 22 78 99;
+  /* JTBD: emotional_jobs (rose, kin to emotions) */
+  --lane-emotional_jobs-accent: 219 39 119;
+  --lane-emotional_jobs-border: 244 114 182;
+  --lane-emotional_jobs-tint: 253 242 248;
+  --lane-emotional_jobs-chip-bg: 252 231 243;
+  --lane-emotional_jobs-chip-text: 157 23 77;
+  --lane-emotional_jobs-highlight-bg: 251 207 232;
+  --lane-emotional_jobs-highlight-text: 131 24 67;
+  /* JTBD: social_jobs (violet) */
+  --lane-social_jobs-accent: 109 40 217;
+  --lane-social_jobs-border: 167 139 250;
+  --lane-social_jobs-tint: 245 243 255;
+  --lane-social_jobs-chip-bg: 237 233 254;
+  --lane-social_jobs-chip-text: 91 33 182;
+  --lane-social_jobs-highlight-bg: 221 214 254;
+  --lane-social_jobs-highlight-text: 76 29 149;
+  /* JTBD: desired_outcomes (emerald, kin to opportunities) */
+  --lane-desired_outcomes-accent: 4 120 87;
+  --lane-desired_outcomes-border: 52 211 153;
+  --lane-desired_outcomes-tint: 236 253 245;
+  --lane-desired_outcomes-chip-bg: 209 250 229;
+  --lane-desired_outcomes-chip-text: 6 95 70;
+  --lane-desired_outcomes-highlight-bg: 167 243 208;
+  --lane-desired_outcomes-highlight-text: 6 78 59;
+  /* JTBD: current_solutions (indigo) */
+  --lane-current_solutions-accent: 67 56 202;
+  --lane-current_solutions-border: 129 140 248;
+  --lane-current_solutions-tint: 238 242 255;
+  --lane-current_solutions-chip-bg: 224 231 255;
+  --lane-current_solutions-chip-text: 55 48 163;
+  --lane-current_solutions-highlight-bg: 199 210 254;
+  --lane-current_solutions-highlight-text: 49 46 129;
+  /* JTBD: context_triggers (cyan) */
+  --lane-context_triggers-accent: 6 182 212;
+  --lane-context_triggers-border: 103 232 249;
+  --lane-context_triggers-tint: 236 254 255;
+  --lane-context_triggers-chip-bg: 207 250 254;
+  --lane-context_triggers-chip-text: 14 116 144;
+  --lane-context_triggers-highlight-bg: 165 243 252;
+  --lane-context_triggers-highlight-text: 22 78 99;
+  /* JTBD: hiring_criteria (teal) */
+  --lane-hiring_criteria-accent: 15 118 110;
+  --lane-hiring_criteria-border: 45 212 191;
+  --lane-hiring_criteria-tint: 240 253 250;
+  --lane-hiring_criteria-chip-bg: 204 251 241;
+  --lane-hiring_criteria-chip-text: 17 94 89;
+  --lane-hiring_criteria-highlight-bg: 153 246 228;
+  --lane-hiring_criteria-highlight-text: 19 78 74;
+  /* JTBD: firing_criteria (amber, warning energy) */
+  --lane-firing_criteria-accent: 180 83 9;
+  --lane-firing_criteria-border: 251 191 36;
+  --lane-firing_criteria-tint: 255 251 235;
+  --lane-firing_criteria-chip-bg: 254 243 199;
+  --lane-firing_criteria-chip-text: 146 64 14;
+  --lane-firing_criteria-highlight-bg: 253 230 138;
+  --lane-firing_criteria-highlight-text: 120 53 15;
+
+  /* Affinity: observation (sky) */
+  --lane-observation-accent: 3 105 161;
+  --lane-observation-border: 56 189 248;
+  --lane-observation-tint: 240 249 255;
+  --lane-observation-chip-bg: 224 242 254;
+  --lane-observation-chip-text: 7 89 133;
+  --lane-observation-highlight-bg: 186 230 253;
+  --lane-observation-highlight-text: 12 74 110;
+  /* Affinity: quote (violet) */
+  --lane-quote-accent: 109 40 217;
+  --lane-quote-border: 167 139 250;
+  --lane-quote-tint: 245 243 255;
+  --lane-quote-chip-bg: 237 233 254;
+  --lane-quote-chip-text: 76 29 149;
+  --lane-quote-highlight-bg: 221 214 254;
+  --lane-quote-highlight-text: 76 29 149;
+  /* Affinity: insight (amber) */
+  --lane-insight-accent: 217 119 6;
+  --lane-insight-border: 251 191 36;
+  --lane-insight-tint: 255 251 235;
+  --lane-insight-chip-bg: 254 243 199;
+  --lane-insight-chip-text: 146 64 14;
+  --lane-insight-highlight-bg: 253 230 138;
+  --lane-insight-highlight-text: 120 53 15;
+  /* Affinity: need (emerald) */
+  --lane-need-accent: 5 150 105;
+  --lane-need-border: 52 211 153;
+  --lane-need-tint: 236 253 245;
+  --lane-need-chip-bg: 209 250 229;
+  --lane-need-chip-text: 6 95 70;
+  --lane-need-highlight-bg: 167 243 208;
+  --lane-need-highlight-text: 6 78 59;
+  /* Affinity: theme (placeholder — actual color cycled per index by themeKindForIndex) */
+  --lane-theme-accent: 100 116 139;
+  --lane-theme-border: 203 213 225;
+  --lane-theme-tint: 248 250 252;
+  --lane-theme-chip-bg: 241 245 249;
+  --lane-theme-chip-text: 51 65 85;
+  --lane-theme-highlight-bg: 226 232 240;
+  --lane-theme-highlight-text: 15 23 42;
+  /* Affinity: ungrouped (zinc, deliberately muted) */
+  --lane-ungrouped-accent: 113 113 122;
+  --lane-ungrouped-border: 212 212 216;
+  --lane-ungrouped-tint: 250 250 250;
+  --lane-ungrouped-chip-bg: 244 244 245;
+  --lane-ungrouped-chip-text: 82 82 91;
+  --lane-ungrouped-highlight-bg: 228 228 231;
+  --lane-ungrouped-highlight-text: 39 39 42;
+
+  /* Competitive: subject (indigo, the "us" highlight) */
+  --lane-subject-accent: 79 70 229;
+  --lane-subject-border: 129 140 248;
+  --lane-subject-tint: 238 242 255;
+  --lane-subject-chip-bg: 224 231 255;
+  --lane-subject-chip-text: 49 46 129;
+  --lane-subject-highlight-bg: 199 210 254;
+  --lane-subject-highlight-text: 49 46 129;
+  /* Competitive: competitor (neutral) */
+  --lane-competitor-accent: 100 116 139;
+  --lane-competitor-border: 203 213 225;
+  --lane-competitor-tint: 255 255 255;
+  --lane-competitor-chip-bg: 241 245 249;
+  --lane-competitor-chip-text: 51 65 85;
+  --lane-competitor-highlight-bg: 226 232 240;
+  --lane-competitor-highlight-text: 15 23 42;
+  /* Competitive: criterion (stone) */
+  --lane-criterion-accent: 87 83 78;
+  --lane-criterion-border: 168 162 158;
+  --lane-criterion-tint: 250 250 249;
+  --lane-criterion-chip-bg: 231 229 228;
+  --lane-criterion-chip-text: 68 64 60;
+  --lane-criterion-highlight-bg: 214 211 209;
+  --lane-criterion-highlight-text: 41 37 36;
+
+  /* Matrix 2x2: quadrant_high (uses opportunities accent intent) */
+  --lane-quadrant_high-accent: 5 150 105;
+  --lane-quadrant_high-border: 52 211 153;
+  --lane-quadrant_high-tint: 236 253 245;
+  --lane-quadrant_high-chip-bg: 209 250 229;
+  --lane-quadrant_high-chip-text: 4 120 87;
+  --lane-quadrant_high-highlight-bg: 167 243 208;
+  --lane-quadrant_high-highlight-text: 6 78 59;
+  /* Matrix 2x2: quadrant_low (muted slate, deprioritized energy) */
+  --lane-quadrant_low-accent: 100 116 139;
+  --lane-quadrant_low-border: 203 213 225;
+  --lane-quadrant_low-tint: 248 250 252;
+  --lane-quadrant_low-chip-bg: 241 245 249;
+  --lane-quadrant_low-chip-text: 51 65 85;
+  --lane-quadrant_low-highlight-bg: 226 232 240;
+  --lane-quadrant_low-highlight-text: 15 23 42;
+}
+
+/* Unified focus / selection ring used across cards, headers, and rails. */
+.ring-focus {
+  --tw-ring-offset-width: 2px;
+  --tw-ring-offset-color: rgb(var(--canvas));
+  --tw-ring-color: rgb(var(--ink-primary));
+  --tw-ring-shadow:
+    var(--tw-ring-inset) 0 0 0 calc(2px + var(--tw-ring-offset-width)) var(--tw-ring-color);
+  --tw-ring-offset-shadow:
+    var(--tw-ring-inset) 0 0 0 var(--tw-ring-offset-width) var(--tw-ring-offset-color);
+  box-shadow: var(--tw-ring-offset-shadow), var(--tw-ring-shadow), 0 0 #0000;
 }
 
 html,

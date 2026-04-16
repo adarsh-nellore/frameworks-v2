@@ -33,42 +33,110 @@ export function isDesignTokenBundleShape(raw: unknown): raw is Record<string, un
   return false;
 }
 
-/** Parse #rgb / #rrggbb / rgb() / rgba() → space-separated R G B (for our semantic vars). */
+// ── Color conversion helpers ─────────────────────────────────────────────────
+
+function clamp01(n: number): number {
+  return Math.max(0, Math.min(1, n));
+}
+
+function linearToGamma(c: number): number {
+  const x = clamp01(c);
+  return x <= 0.0031308 ? 12.92 * x : 1.055 * Math.pow(x, 1 / 2.4) - 0.055;
+}
+
+function rgbFloatToTriplet(r: number, g: number, b: number): string {
+  return `${Math.round(linearToGamma(r) * 255)} ${Math.round(linearToGamma(g) * 255)} ${Math.round(linearToGamma(b) * 255)}`;
+}
+
+/** oklch(L C H[ / alpha]) → "R G B" triplet. Pure JS, no browser APIs needed. */
+function oklchToTriplet(l: number, c: number, h: number): string {
+  const hRad = (h * Math.PI) / 180;
+  const a = c * Math.cos(hRad);
+  const b = c * Math.sin(hRad);
+  // OKLab → LMS (cube-root intermediates)
+  const l_ = l + 0.3963377774 * a + 0.2158037573 * b;
+  const m_ = l - 0.1055613458 * a - 0.0638541728 * b;
+  const s_ = l - 0.0894841775 * a - 1.2914855480 * b;
+  const lc = l_ ** 3;
+  const mc = m_ ** 3;
+  const sc = s_ ** 3;
+  // LMS → linear sRGB
+  const rLin = +4.0767416621 * lc - 3.3077115913 * mc + 0.2309699292 * sc;
+  const gLin = -1.2684380046 * lc + 2.6097574011 * mc - 0.3413193965 * sc;
+  const bLin = -0.0041960863 * lc - 0.7034186147 * mc + 1.7076147010 * sc;
+  return rgbFloatToTriplet(rLin, gLin, bLin);
+}
+
+/** hsl(H S% L%[ / alpha]) — both legacy comma and modern space syntax. */
+function hslToTriplet(h: number, s: number, l: number): string {
+  const sn = s / 100;
+  const ln = l / 100;
+  const k = (n: number) => (n + h / 30) % 12;
+  const a = sn * Math.min(ln, 1 - ln);
+  const f = (n: number) => ln - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+  return `${Math.round(f(0) * 255)} ${Math.round(f(8) * 255)} ${Math.round(f(4) * 255)}`;
+}
+
+/** Parse #rgb / #rrggbb / rgb() / rgba() / hsl() / oklch() → "R G B" triplet. */
 export function colorToRgbTriplet(value: string): string | null {
   const v = value.trim();
+
+  // Already a space-separated triplet
   const triplet = v.match(/^(\d{1,3})\s+(\d{1,3})\s+(\d{1,3})$/);
   if (triplet) {
-    const r = +triplet[1];
-    const g = +triplet[2];
-    const b = +triplet[3];
+    const r = +triplet[1], g = +triplet[2], b = +triplet[3];
     if (r <= 255 && g <= 255 && b <= 255) return `${r} ${g} ${b}`;
     return null;
   }
-  const hex = v.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+
+  // Hex
+  const hex = v.match(/^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i);
   if (hex) {
     let h = hex[1];
-    if (h.length === 3) {
-      h = h
-        .split("")
-        .map((c) => c + c)
-        .join("");
-    }
-    const n = parseInt(h, 16);
+    if (h.length === 3 || h.length === 4) h = h.split("").map((c) => c + c).join("");
+    // Strip alpha channel if 8-char
+    const n = parseInt(h.slice(0, 6), 16);
     return `${(n >> 16) & 255} ${(n >> 8) & 255} ${n & 255}`;
   }
-  const rgba = v.match(
-    /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*[\d.]+\s*)?\)/i
+
+  // oklch() — Tailwind CSS v4 default
+  const oklchLegacy = v.match(
+    /^oklch\(\s*([\d.]+%?)\s+([\d.]+)\s+([\d.]+(?:deg)?)\s*(?:\/\s*[\d.%]+\s*)?\)$/i
   );
-  if (rgba) {
-    return `${Math.round(Number(rgba[1]))} ${Math.round(Number(rgba[2]))} ${Math.round(Number(rgba[3]))}`;
+  if (oklchLegacy) {
+    let l = parseFloat(oklchLegacy[1]);
+    if (oklchLegacy[1].includes("%")) l /= 100;
+    const c = parseFloat(oklchLegacy[2]);
+    const h = parseFloat(oklchLegacy[3]);
+    return oklchToTriplet(l, c, isNaN(h) ? 0 : h);
   }
-  const borderRgba = v.match(/rgba?\([\d.\s,]+\)/gi);
-  if (borderRgba) {
-    for (const frag of borderRgba) {
-      const t2 = colorToRgbTriplet(frag);
-      if (t2) return t2;
-    }
+
+  // hsl() / hsla() — both comma (legacy) and space (modern) syntax
+  const hslComma = v.match(
+    /^hsla?\(\s*([\d.]+)(?:deg)?\s*,\s*([\d.]+)%?\s*,\s*([\d.]+)%?\s*(?:,\s*[\d.%]+\s*)?\)$/i
+  );
+  if (hslComma) return hslToTriplet(+hslComma[1], +hslComma[2], +hslComma[3]);
+
+  const hslSpace = v.match(
+    /^hsla?\(\s*([\d.]+)(?:deg)?\s+([\d.]+)%?\s+([\d.]+)%?\s*(?:\/\s*[\d.%]+\s*)?\)$/i
+  );
+  if (hslSpace) return hslToTriplet(+hslSpace[1], +hslSpace[2], +hslSpace[3]);
+
+  // rgb() / rgba() — comma or space syntax
+  const rgbComma = v.match(
+    /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*[\d.]+\s*)?\)$/i
+  );
+  if (rgbComma) {
+    return `${Math.round(+rgbComma[1])} ${Math.round(+rgbComma[2])} ${Math.round(+rgbComma[3])}`;
   }
+
+  const rgbSpace = v.match(
+    /^rgba?\(\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)\s*(?:\/\s*[\d.%]+\s*)?\)$/i
+  );
+  if (rgbSpace) {
+    return `${Math.round(+rgbSpace[1])} ${Math.round(+rgbSpace[2])} ${Math.round(+rgbSpace[3])}`;
+  }
+
   return null;
 }
 

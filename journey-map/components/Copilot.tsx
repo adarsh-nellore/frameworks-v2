@@ -6,25 +6,41 @@ import {
   motion,
   useReducedMotion,
 } from "framer-motion";
-import { ArrowUp, RotateCcw, Sparkles } from "lucide-react";
+import { ArrowUp, ChevronDown, ChevronUp, RotateCcw, Sparkles } from "lucide-react";
 import { kindTheme } from "@/lib/row-kind-theme";
 import { GeneratePanel } from "@/components/GeneratePanel";
 import type { GenerateEvent } from "@/lib/pipeline/events";
-import type { JourneyMap, JourneyMapSelection } from "@/lib/frameworks/journey-map/types";
-import { applyOps } from "@/lib/frameworks/journey-map/ops";
-import type { Op } from "@/lib/frameworks/journey-map/ops";
+import type { UniversalMap } from "@/lib/frameworks/universal/types";
+import type { FrameworkConfig } from "@/lib/frameworks/universal/config";
 
 type Props = {
   frameworkId: string;
-  map: JourneyMap;
-  onMapChange: (next: JourneyMap) => void;
+  /** Human-readable framework label (e.g. "JTBD Canvas") for the chat chip. */
+  frameworkLabel: string;
+  frameworkOptions: { id: string; label: string }[];
+  onFrameworkChange: (frameworkId: string) => void;
+  /** Optional one-line subtitle (e.g. "Editing functional, emotional, and social jobs"). */
+  frameworkSubtitle?: string;
+  /** Optional textarea placeholder reflecting the active framework. */
+  chatPlaceholder?: string;
+  /** Active framework config — used to read colNoun/rowNoun for focus previews. */
+  frameworkConfig?: FrameworkConfig;
+  /** Set when the active framework is a user-generated custom (not in the static
+   *  server-side registry). Forwarded in the /api/arrange body so the server
+   *  can resolve the framework via the supplied config. */
+  customConfig?: FrameworkConfig;
+  map: UniversalMap;
+  onMapChange: (next: UniversalMap) => void;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  applyOps: (map: any, ops: any[]) => { ok: true; map: any } | { ok: false; reason: string; failedAtIndex?: number };
   exampleInstructions: string[];
   onBusyChange?: (busy: boolean) => void;
   /** Current canvas selection sent as agent focus (optional on the wire). */
-  focus: JourneyMapSelection | null;
+  focus: unknown;
   onFocusClear: () => void;
   /** Bubble generation progress events up to the page so it can render the overlay. */
-  onGenerationProgress?: (event: GenerateEvent<JourneyMap> | null) => void;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  onGenerationProgress?: (event: GenerateEvent<any> | null) => void;
   /** Receive a cancel function whenever generation is in flight. */
   registerGenerationCancel?: (cancel: (() => void) | null) => void;
 };
@@ -45,31 +61,33 @@ type ChatMsg =
 let msgCounter = 0;
 const nextId = () => `m${++msgCounter}`;
 
-type BlockPreview = {
-  cellId: string;
+type CardPreview = {
+  cardId: string;
   text: string;
-  rowKind: string;
+  /** Theme key — prefers row.kind, falls back to col.kind. */
+  themeKind: string;
   rowLabel: string;
-  stageLabel: string;
+  colLabel: string;
 };
 
-function blockFocusPreviews(
-  map: JourneyMap,
-  focus: Extract<JourneyMapSelection, { type: "blocks" }>
-): BlockPreview[] {
-  const out: BlockPreview[] = [];
-  for (const id of focus.ids) {
-    const cell = map.cells.find((c) => c.id === id);
-    if (!cell) continue;
-    const row = map.rows.find((r) => r.id === cell.rowId);
-    const stage = map.stages.find((s) => s.id === cell.stageId);
-    if (!row || !stage) continue;
+// Build preview rows for selected card ids against the universal map shape.
+function cardFocusPreviews(
+  map: UniversalMap,
+  ids: string[]
+): CardPreview[] {
+  const out: CardPreview[] = [];
+  for (const id of ids) {
+    const card = map.cards.find((c) => c.id === id);
+    if (!card) continue;
+    const col = map.cols.find((c) => c.id === card.colId);
+    const row = map.rows.find((r) => r.id === card.rowId);
+    if (!col || !row) continue;
     out.push({
-      cellId: cell.id,
-      text: cell.text,
-      rowKind: row.kind,
+      cardId: card.id,
+      text: card.text,
+      themeKind: row.kind ?? col.kind ?? "neutral",
       rowLabel: row.label || row.id,
-      stageLabel: stage.label || stage.id,
+      colLabel: col.label || col.id,
     });
   }
   return out;
@@ -88,8 +106,16 @@ function previewSnippet(text: string, maxWords = 6): string {
 
 export function Copilot({
   frameworkId,
+  frameworkLabel,
+  frameworkOptions,
+  onFrameworkChange,
+  frameworkSubtitle,
+  chatPlaceholder,
+  frameworkConfig,
+  customConfig,
   map,
   onMapChange,
+  applyOps,
   exampleInstructions,
   onBusyChange,
   focus,
@@ -101,7 +127,7 @@ export function Copilot({
   const [busy, setBusy] = useState(false);
   const [draft, setDraft] = useState("");
   const [messages, setMessages] = useState<ChatMsg[]>([]);
-  const [expanded, setExpanded] = useState(false);
+  const [minimized, setMinimized] = useState(false);
   const [mode, setMode] = useState<CopilotMode>("chat");
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -113,19 +139,18 @@ export function Copilot({
 
   function handleModeChange(next: CopilotMode) {
     if (busy) return;
-    if (next === "generate") setExpanded(true);
-    if (next === "chat" && messages.length === 0) setExpanded(false);
+    setMinimized(false);
     setMode(next);
   }
 
-  function handleGenerateSuccess(nextMap: JourneyMap, summary: string) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function handleGenerateSuccess(nextMap: any, summary: string) {
     onMapChange(nextMap);
     // GeneratePanel unmounts immediately after we switch modes; clear parent-level
     // busy/progress here so we never leave the board in a stale "processing" state.
     setBusyBoth(false);
     onGenerationProgress?.(null);
     setMode("chat");
-    setExpanded(true);
     setMessages((m) => [
       ...m,
       {
@@ -143,18 +168,13 @@ export function Copilot({
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages, busy, expanded]);
-
-  // Auto-expand the panel once a conversation has started.
-  useEffect(() => {
-    if (messages.length > 0) setExpanded(true);
-  }, [messages.length]);
+  }, [messages, busy]);
 
   async function sendIntent(text: string) {
     const trimmed = text.trim();
     if (!trimmed || busy) return;
     setBusyBoth(true);
-    setExpanded(true);
+    setMinimized(false);
     setMessages((m) => [...m, { id: nextId(), role: "user", text: trimmed }]);
     try {
       const res = await fetch("/api/arrange", {
@@ -165,13 +185,15 @@ export function Copilot({
           map,
           instruction: trimmed,
           ...(focus ? { focus } : {}),
+          ...(customConfig ? { customConfig } : {}),
         }),
       });
       const data = await res.json();
       if (!res.ok) {
         throw new Error(data?.error ?? `Arrange failed (HTTP ${res.status})`);
       }
-      const ops = data.ops as Op[];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const ops = data.ops as any[];
       const result = applyOps(map, ops);
       if (!result.ok) {
         throw new Error(
@@ -215,50 +237,97 @@ export function Copilot({
   }
 
   const visiblePills = exampleInstructions.slice(0, 4);
-  const showPills = !expanded && messages.length === 0;
+  const showPills = messages.length === 0;
+
+  // Universal selection shape: { type: "cards", ids } | { type: "col", id } | { type: "row", id }
+  const focusAny = focus as
+    | { type: "cards"; ids: string[] }
+    | { type: "col"; id: string }
+    | { type: "row"; id: string }
+    | null
+    | undefined;
 
   const cardPreviews = useMemo(() => {
-    if (!focus || focus.type !== "blocks") return [];
-    return blockFocusPreviews(map, focus);
-  }, [map, focus]);
+    if (!focusAny || focusAny.type !== "cards") return [];
+    return cardFocusPreviews(map, focusAny.ids);
+  }, [map, focusAny]);
+
+  const colNoun = frameworkConfig?.colNoun ?? "Column";
+  const rowNoun = frameworkConfig?.rowNoun ?? "Row";
+
+  if (minimized) {
+    return (
+      <div
+        data-floating
+        data-copilot
+        className="fixed top-20 right-4 z-30"
+      >
+        <button
+          type="button"
+          onClick={() => setMinimized(false)}
+          className="glass-strong rounded-full px-3.5 py-2 inline-flex items-center gap-2 text-[12px] text-ink-secondary hover:text-ink-primary transition-colors"
+          aria-label="Expand AI copilot"
+          title="Expand AI copilot"
+        >
+          <Sparkles className="h-3.5 w-3.5 text-ink-primary" />
+          <span className="font-medium">AI Copilot</span>
+          <ChevronUp className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div
       data-floating
       data-copilot
       className={[
-        "fixed bottom-5 left-1/2 -translate-x-1/2 z-30",
-        "w-[640px] max-w-[calc(100vw-2rem)]",
+        "fixed top-20 right-4 bottom-5 z-30",
+        "w-[420px] max-w-[calc(100vw-2rem)]",
         "glass-strong rounded-2xl flex flex-col overflow-hidden",
-        "transition-[max-height] duration-300 ease-out",
       ].join(" ")}
-      style={{ maxHeight: expanded ? "min(56vh, 560px)" : "320px" }}
     >
-      {/* Mode toggle */}
-      <div className="flex items-center px-4 pt-3 pb-1.5 gap-1 border-b border-border-soft/50">
-        {(["chat", "generate"] as CopilotMode[]).map((m) => (
-          <button
-            key={m}
-            type="button"
-            onClick={() => handleModeChange(m)}
-            disabled={busy}
-            className={[
-              "px-2.5 py-1 rounded-md transition-colors",
-              "text-[10px] font-mono uppercase tracking-[0.18em]",
-              mode === m
-                ? "text-ink-primary bg-ink-primary/[0.07]"
-                : "text-ink-muted hover:text-ink-secondary",
-              busy ? "opacity-50 cursor-not-allowed" : "",
-            ].join(" ")}
-          >
-            {m}
-          </button>
-        ))}
+      {/* Mode toggle + framework context chip */}
+      <div className="flex items-center px-4 pt-3 pb-1.5 gap-2 border-b border-border-soft/50">
+        <div className="flex items-center gap-1">
+          {(["chat", "generate"] as CopilotMode[]).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => handleModeChange(m)}
+              disabled={busy}
+              className={[
+                "px-2.5 py-1 rounded-md transition-colors",
+                "text-[10px] font-mono uppercase tracking-[0.18em]",
+                mode === m
+                  ? "text-ink-primary bg-ink-primary/[0.07]"
+                  : "text-ink-muted hover:text-ink-secondary",
+                busy ? "opacity-50 cursor-not-allowed" : "",
+              ].join(" ")}
+            >
+              {m}
+            </button>
+          ))}
+        </div>
+
+        {/* Framework context — makes it visually obvious which framework the agent is editing */}
+        <div className="ml-auto flex items-center gap-1.5 min-w-0">
+          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 shrink-0" aria-hidden />
+          <span className="font-mono text-[9px] tracking-[0.18em] uppercase text-ink-muted shrink-0">
+            Editing
+          </span>
+          <span className="text-[11px] font-medium text-ink-primary truncate" title={frameworkSubtitle ?? frameworkLabel}>
+            {frameworkLabel}
+          </span>
+        </div>
       </div>
 
       {mode === "generate" ? (
         <GeneratePanel
           frameworkId={frameworkId}
+          frameworkLabel={frameworkLabel}
+          frameworkOptions={frameworkOptions}
+          onFrameworkChange={onFrameworkChange}
           onSuccess={handleGenerateSuccess}
           onBusyChange={setBusyBoth}
           onProgress={onGenerationProgress}
@@ -270,7 +339,7 @@ export function Copilot({
       {(messages.length > 0 || busy) && (
         <div
           ref={scrollRef}
-          className="chat-scroll flex-1 overflow-y-auto px-5 pt-4 pb-3 space-y-3 min-h-0"
+          className="order-1 chat-scroll flex-1 overflow-y-auto px-5 pt-4 pb-3 space-y-3 min-h-0"
         >
           <AnimatePresence initial={false}>
             {messages.map((m) => (
@@ -336,13 +405,7 @@ export function Copilot({
 
       {/* Pills (only when chat is empty) */}
       {showPills && (
-        <div className="px-5 pt-4 pb-2">
-          <div className="flex items-center gap-1.5 mb-2.5">
-            <Sparkles className="h-3.5 w-3.5 text-ink-primary" />
-            <span className="font-mono text-[9px] tracking-[0.22em] uppercase text-ink-muted">
-              Try
-            </span>
-          </div>
+        <div className="order-3 mt-auto px-5 pt-4 pb-2">
           <div className="grid grid-cols-2 gap-1.5">
             {visiblePills.map((c, i) => (
               <motion.button
@@ -368,9 +431,9 @@ export function Copilot({
         </div>
       )}
 
-      {/* Agent focus: mini previews (cards) or compact summary (row / stages) */}
-      {focus ? (
-        <div className="px-5 pt-2 pb-2 border-b border-border-soft/60 space-y-2">
+      {/* Agent focus: universal selection previews (cards | col | row). */}
+      {focusAny ? (
+        <div className="order-2 px-5 pt-2 pb-2 border-b border-border-soft/60 space-y-2">
           <div className="flex items-center justify-between gap-2">
             <span className="font-mono text-[9px] uppercase tracking-wider text-ink-muted shrink-0">
               Focus
@@ -385,39 +448,39 @@ export function Copilot({
             </button>
           </div>
 
-          {focus.type === "blocks" && cardPreviews.length > 0 ? (
+          {focusAny.type === "cards" && cardPreviews.length > 0 ? (
             <div className="flex gap-2 overflow-x-auto pb-0.5 -mx-1 px-1 [scrollbar-width:thin]">
               {cardPreviews.map((p) => {
-                const theme = kindTheme(p.rowKind);
+                const theme = kindTheme(p.themeKind);
                 return (
                   <span
-                    key={p.cellId}
+                    key={p.cardId}
                     className={[
-                      "shrink-0 max-w-[180px] rounded-full border",
+                      "shrink-0 max-w-[200px] rounded-full border",
                       "px-2.5 py-1 text-[10px] leading-none",
                       "font-medium text-ink-primary truncate",
                       theme.tintBg,
                       `border-l-2 ${theme.accentBorder}`,
                       "border-border-soft",
                     ].join(" ")}
-                    title={p.text || "Empty"}
+                    title={`${p.colLabel} · ${p.rowLabel}\n${p.text || "Empty"}`}
                   >
                     {previewSnippet(p.text)}
                   </span>
                 );
               })}
             </div>
-          ) : focus.type === "blocks" ? (
+          ) : focusAny.type === "cards" ? (
             <p className="text-[11px] text-ink-muted">
               Selected cards are no longer on the map.
             </p>
-          ) : focus.type === "row" ? (
+          ) : focusAny.type === "row" ? (
             (() => {
-              const row = map.rows.find((r) => r.id === focus.id);
+              const row = map.rows.find((r) => r.id === focusAny.id);
               if (!row) {
                 return (
                   <p className="text-[11px] text-ink-muted">
-                    Row is no longer on the map.
+                    {rowNoun} is no longer on the map.
                   </p>
                 );
               }
@@ -442,7 +505,7 @@ export function Copilot({
                   </span>
                   <div className="min-w-0">
                     <p className="font-mono text-[8px] uppercase tracking-wide text-ink-muted">
-                      Row
+                      {rowNoun}
                     </p>
                     <p className="text-[12px] font-medium text-ink-primary truncate">
                       {row.label || row.id}
@@ -451,28 +514,54 @@ export function Copilot({
                 </div>
               );
             })()
-          ) : (
-            <div className="flex flex-wrap gap-1.5">
-              {focus.stageIds.map((sid) => {
-                const st = map.stages.find((s) => s.id === sid);
-                if (!st) return null;
+          ) : focusAny.type === "col" ? (
+            (() => {
+              const col = map.cols.find((c) => c.id === focusAny.id);
+              if (!col) {
                 return (
-                  <div
-                    key={sid}
-                    className="rounded-md border border-border-soft bg-white/70 px-2 py-1 text-[11px] text-ink-primary shadow-sm max-w-[140px] truncate"
-                    title={st.label}
-                  >
-                    {st.label || st.id}
-                  </div>
+                  <p className="text-[11px] text-ink-muted">
+                    {colNoun} is no longer on the map.
+                  </p>
                 );
-              })}
-            </div>
+              }
+              const theme = kindTheme(col.kind);
+              const Icon = theme.Icon;
+              return (
+                <div
+                  className={[
+                    "rounded-lg border shadow-card flex items-center gap-2 p-2.5 pl-3",
+                    theme.tintBg,
+                    `border-l-[3px] ${theme.accentBorder}`,
+                    "border-border-soft",
+                  ].join(" ")}
+                >
+                  <span
+                    className={[
+                      "inline-flex h-6 w-6 items-center justify-center rounded-md",
+                      theme.chipBg,
+                    ].join(" ")}
+                  >
+                    <Icon className={`h-3.5 w-3.5 ${theme.chipText}`} />
+                  </span>
+                  <div className="min-w-0">
+                    <p className="font-mono text-[8px] uppercase tracking-wide text-ink-muted">
+                      {colNoun}
+                    </p>
+                    <p className="text-[12px] font-medium text-ink-primary truncate">
+                      {col.label || col.id}
+                    </p>
+                  </div>
+                </div>
+              );
+            })()
+          ) : (
+            <p className="text-[11px] text-ink-muted">Selection active.</p>
           )}
         </div>
       ) : null}
 
       {/* Input */}
-      <form onSubmit={onSubmit} className="px-3 pb-3 pt-2">
+      <form onSubmit={onSubmit} className="order-4 px-3 pb-2 pt-2">
         <div className="relative">
           <textarea
             ref={textareaRef}
@@ -481,7 +570,7 @@ export function Copilot({
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={onKeyDown}
             disabled={busy}
-            placeholder="Ask the copilot to reshape the journey…"
+            placeholder={chatPlaceholder ?? `Ask the copilot to refine your ${frameworkLabel.toLowerCase()}…`}
             className={[
               "w-full resize-none rounded-xl bg-white/70",
               "border border-border-soft hover:border-border-medium",
@@ -507,6 +596,21 @@ export function Copilot({
           </button>
         </div>
       </form>
+
+      <div className="order-5 px-3 pb-3">
+        <div className="border-t border-border-soft/50 pt-2 flex justify-end">
+          <button
+            type="button"
+            onClick={() => setMinimized(true)}
+            className="inline-flex items-center gap-1.5 text-[11px] text-ink-muted hover:text-ink-primary transition-colors"
+            aria-label="Minimize AI copilot"
+            title="Minimize AI copilot"
+          >
+            <ChevronDown className="h-3.5 w-3.5" />
+            Minimize
+          </button>
+        </div>
+      </div>
         </Fragment>
       )}
     </div>

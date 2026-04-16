@@ -4,9 +4,20 @@ import type { Config } from "tailwindcss";
 // lib/row-kind-theme.ts — Tailwind's JIT scanner can't resolve ${kind},
 // so we must safelist them explicitly.
 const LANE_KINDS = [
+  // Journey-map originals
   "actions", "touchpoints", "thoughts", "emotions", "pain_points",
   "opportunities", "metrics", "stakeholders", "systems", "channels",
   "decisions", "artifacts", "neutral",
+  // JTBD section kinds
+  "functional_jobs", "emotional_jobs", "social_jobs",
+  "desired_outcomes", "current_solutions",
+  "context_triggers", "hiring_criteria", "firing_criteria",
+  // Affinity card-type kinds + theme/ungrouped
+  "observation", "quote", "insight", "need", "theme", "ungrouped",
+  // Competitive map roles
+  "subject", "competitor", "criterion",
+  // 2x2 matrix quadrant accents
+  "quadrant_high", "quadrant_low",
 ];
 const laneSafelist: string[] = [];
 for (const kind of LANE_KINDS) {
@@ -53,6 +64,14 @@ export default {
         "ink-muted": "rgb(var(--ink-muted) / <alpha-value>)",
         "border-soft": "rgb(var(--border-soft) / <alpha-value>)",
         "border-medium": "rgb(var(--border-medium) / <alpha-value>)",
+        // Single brand accent — used for selection rings, primary buttons,
+        // focus, and the optional card accent stripe.
+        accent: "rgb(var(--accent) / <alpha-value>)",
+      },
+      borderRadius: {
+        sm: "var(--radius-sm)",
+        md: "var(--radius-md)",
+        lg: "var(--radius-lg)",
       },
       boxShadow: {
         panel: "var(--shadow-panel)",

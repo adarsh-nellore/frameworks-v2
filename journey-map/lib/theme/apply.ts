@@ -1,13 +1,36 @@
-import type { LaneTokenSet, SemanticTokens, ThemeV1 } from "./types";
+import type { DesignSystem, LaneTokenSet, SemanticTokens, ThemeV1 } from "./types";
 import { buildGoogleFontsHref, removeGoogleFontLinks, upsertGoogleFontLink } from "./google-fonts";
 
-/** Inline `--foo` vars from an external design system (cleared with {@link clearAppliedTheme}). */
+// ──────────────────────────────────────────────────────────────────────────────
+// Theme application — SCOPED TO THE FRAMEWORK BOARD.
+//
+// All CSS variables are written to the `[data-map-page]` element (rendered
+// at app/page.tsx). Copilot, TopBar, Canvas, framework switcher, dialogs,
+// and overlays are siblings of the board — not descendants — so they
+// continue to resolve tokens via :root defaults and never repaint.
+//
+// Deliberately NOT touched here:
+//   --wash-*, --dot-grid, --glass-*   (page background + chrome — stay :root)
+//   --shadow-tint                     (would require overriding shadow
+//                                      compositions; default shadows are fine)
+//   --font-sans / --font-mono         (next/font base — reserved for chrome)
+// Only --jm-font-sans / --jm-font-mono are overridden (board-local font).
+// ──────────────────────────────────────────────────────────────────────────────
+
+/** Resolve the scoping target (the board container). Null if not in DOM yet. */
+function boardTarget(explicit?: HTMLElement | null): HTMLElement | null {
+  if (explicit) return explicit;
+  if (typeof document === "undefined") return null;
+  return document.querySelector<HTMLElement>("[data-map-page]");
+}
+
+/** Tracked inline design-token keys we set via applyDesignTokenCssVars, so we can clear them. */
 let appliedDesignTokenKeys: string[] = [];
 
 /**
  * Names we already drive via {@link applyTheme} or that must stay compatible with
  * `rgb(var(--…) / α)` in Tailwind/globals — injecting foreign values (hex, full shadows)
- * breaks paint (e.g. blank canvas).
+ * breaks paint.
  */
 const AUXILIARY_VAR_DENY_EXACT = new Set([
   "--canvas",
@@ -34,25 +57,29 @@ const AUXILIARY_VAR_DENY_EXACT = new Set([
   "--font-mono",
   "--jm-font-sans",
   "--jm-font-mono",
+  "--accent",
 ]);
 
 function isDesignTokenVarKeyAllowed(key: string): boolean {
   if (!key.startsWith("--")) return false;
   if (AUXILIARY_VAR_DENY_EXACT.has(key)) return false;
   if (key.startsWith("--lane-")) return false;
-  // App shadows expect `rgb(var(--shadow-tint) / …)`; design files use different `--shadow-*`.
   if (key.startsWith("--shadow-")) return false;
   return true;
 }
 
-export function applyDesignTokenCssVars(flat: Record<string, string> | undefined): void {
-  if (typeof document === "undefined") return;
-  const root = document.documentElement;
-  for (const k of appliedDesignTokenKeys) {
-    root.style.removeProperty(k);
+export function applyDesignTokenCssVars(
+  flat: Record<string, string> | undefined,
+  target?: HTMLElement | null,
+): void {
+  const root = boardTarget(target);
+  // Always clear previously-applied keys (even if target is now missing — the
+  // old keys might still be on a prior element we captured earlier).
+  if (root) {
+    for (const k of appliedDesignTokenKeys) root.style.removeProperty(k);
   }
   appliedDesignTokenKeys = [];
-  if (!flat) return;
+  if (!flat || !root) return;
   for (const [k, v] of Object.entries(flat)) {
     if (!isDesignTokenVarKeyAllowed(k)) continue;
     root.style.setProperty(k, v);
@@ -68,10 +95,25 @@ function laneSlotToKebab(slot: keyof LaneTokenSet): string {
   return String(slot).replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
 }
 
+// The semantic tokens we actively write on the board. Everything else in the
+// SemanticTokens shape (washes, dot-grid, glass) stays at :root so the page
+// background and chrome don't repaint.
+const BOARD_SCOPED_SEMANTIC: (keyof SemanticTokens)[] = [
+  "canvas",
+  "surface",
+  "surfaceSubtle",
+  "surfaceHover",
+  "inkPrimary",
+  "inkSecondary",
+  "inkMuted",
+  "borderSoft",
+  "borderMedium",
+];
+
 function applySemantic(root: HTMLElement, s: SemanticTokens): void {
-  (Object.keys(s) as (keyof SemanticTokens)[]).forEach((key) => {
+  for (const key of BOARD_SCOPED_SEMANTIC) {
     root.style.setProperty(semanticToCssVar(key), s[key]);
-  });
+  }
 }
 
 function applyLanes(root: HTMLElement, lanes: ThemeV1["lanes"]): void {
@@ -83,13 +125,17 @@ function applyLanes(root: HTMLElement, lanes: ThemeV1["lanes"]): void {
   }
 }
 
-/** Apply theme to the document root (CSS variables + optional Google Fonts). */
-export function applyTheme(theme: ThemeV1): void {
-  if (typeof document === "undefined") return;
-  const root = document.documentElement;
+/** Apply theme.v1 to the framework board (CSS variables + optional Google Fonts). */
+export function applyTheme(theme: ThemeV1, target?: HTMLElement | null): void {
+  const root = boardTarget(target);
+  if (!root) return;
+
   applySemantic(root, theme.semantic);
   applyLanes(root, theme.lanes);
 
+  // Google Fonts link is global (head). That's OK — a Google Font being
+  // available doesn't apply it anywhere; only --jm-font-sans/mono on an
+  // element controls which subtree uses it.
   removeGoogleFontLinks();
   const href = buildGoogleFontsHref(theme.fonts);
   if (href) upsertGoogleFontLink(href);
@@ -103,7 +149,7 @@ export function applyTheme(theme: ThemeV1): void {
     const name = theme.fonts.sansGoogle.replace(/\+/g, " ");
     root.style.setProperty(
       "--jm-font-sans",
-      `"${name}", ui-sans-serif, system-ui, sans-serif`
+      `"${name}", ui-sans-serif, system-ui, sans-serif`,
     );
   }
 
@@ -113,31 +159,83 @@ export function applyTheme(theme: ThemeV1): void {
     const name = theme.fonts.monoGoogle.replace(/\+/g, " ");
     root.style.setProperty(
       "--jm-font-mono",
-      `"${name}", ui-monospace, monospace`
+      `"${name}", ui-monospace, monospace`,
     );
   }
 }
 
-/** Clear runtime theme overrides (fonts link + inline vars we set). */
-export function clearAppliedTheme(): void {
-  if (typeof document === "undefined") return;
-  applyDesignTokenCssVars(undefined);
+function setFontFamilyVar(
+  root: HTMLElement,
+  varName: string,
+  value: string | undefined,
+  fallbackFamily: "sans" | "mono",
+): void {
+  root.style.removeProperty(varName);
+  if (!value) return;
+  const trimmed = value.trim();
+  if (/[,"']/.test(trimmed)) {
+    root.style.setProperty(varName, trimmed);
+    return;
+  }
+  const tail = fallbackFamily === "sans"
+    ? "ui-sans-serif, system-ui, sans-serif"
+    : "ui-monospace, monospace";
+  root.style.setProperty(varName, `"${trimmed}", ${tail}`);
+}
+
+/** Apply a flat DesignSystem to the framework board. */
+export function applyDesignSystem(ds: DesignSystem, target?: HTMLElement | null): void {
+  const root = boardTarget(target);
+  if (!root) return;
+
+  root.style.setProperty("--accent", ds.accent);
+  root.style.setProperty("--canvas", ds.canvas);
+  root.style.setProperty("--surface", ds.surface);
+  root.style.setProperty("--surface-subtle", ds.surfaceSubtle);
+  if (ds.surfaceHover) root.style.setProperty("--surface-hover", ds.surfaceHover);
+  root.style.setProperty("--ink-primary", ds.inkPrimary);
+  root.style.setProperty("--ink-secondary", ds.inkSecondary);
+  root.style.setProperty("--ink-muted", ds.inkMuted);
+  root.style.setProperty("--border-soft", ds.borderSoft);
+  if (ds.borderMedium) root.style.setProperty("--border-medium", ds.borderMedium);
+
+  if (ds.radiusSm) root.style.setProperty("--radius-sm", ds.radiusSm);
+  if (ds.radiusMd) root.style.setProperty("--radius-md", ds.radiusMd);
+  if (ds.radiusLg) root.style.setProperty("--radius-lg", ds.radiusLg);
+
+  // Typography — Google Font link is global, local CSS vars are scoped.
   removeGoogleFontLinks();
-  const root = document.documentElement;
-  const keys = Array.from(root.style);
-  for (const k of keys) {
+  const googleFamilies: string[] = [];
+  const looksLikeGoogleName = (s: string) => !/[,"']/.test(s);
+  if (ds.fontSans && looksLikeGoogleName(ds.fontSans)) googleFamilies.push(ds.fontSans);
+  if (ds.fontMono && looksLikeGoogleName(ds.fontMono)) googleFamilies.push(ds.fontMono);
+  if (googleFamilies.length > 0) {
+    const href = buildGoogleFontsHref({
+      sansGoogle: googleFamilies[0],
+      monoGoogle: googleFamilies[1],
+    });
+    if (href) upsertGoogleFontLink(href);
+  }
+  setFontFamilyVar(root, "--jm-font-sans", ds.fontSans, "sans");
+  setFontFamilyVar(root, "--jm-font-mono", ds.fontMono, "mono");
+}
+
+/** Clear all inline theme overrides from the board element. */
+export function clearAppliedTheme(target?: HTMLElement | null): void {
+  const root = boardTarget(target);
+  removeGoogleFontLinks();
+  if (!root) return;
+  applyDesignTokenCssVars(undefined, root);
+  const toClear = Array.from(root.style);
+  for (const k of toClear) {
     if (
+      k === "--accent" ||
       k.startsWith("--canvas") ||
       k.startsWith("--surface") ||
       k.startsWith("--ink-") ||
       k.startsWith("--border-") ||
-      k.startsWith("--shadow") ||
-      k.startsWith("--wash-") ||
-      k.startsWith("--dot-") ||
-      k.startsWith("--glass-") ||
+      k.startsWith("--radius-") ||
       k.startsWith("--lane-") ||
-      k === "--font-sans" ||
-      k === "--font-mono" ||
       k === "--jm-font-sans" ||
       k === "--jm-font-mono"
     ) {

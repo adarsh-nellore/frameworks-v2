@@ -58,3 +58,38 @@ export type BrandInput = {
   sansFont?: string;  // Google Font name (e.g. "DM Sans")
   monoFont?: string;  // Google Font name (e.g. "JetBrains Mono")
 };
+
+/**
+ * Flat design-system schema — the preferred import shape.
+ *
+ * Maps 1:1 to CSS variables on :root. Every framework picks these up uniformly
+ * because cards/headers/banners all reference `bg-surface`, `text-ink-primary`,
+ * `border-border-soft`, `ring-accent`, etc. No per-kind tint palette.
+ *
+ * Color values accept hex (#f0a, #ff00aa), rgb()/rgba(), or "R G B" triplets.
+ * Numeric sizes accept "6px" strings.
+ */
+export type DesignSystem = {
+  version: 1;
+  /** Single brand color — selection rings, primary buttons, accent stripe, focus. */
+  accent: string;
+  // Surfaces (layered hierarchy: canvas < surface-subtle < surface < surface-hover)
+  canvas: string;
+  surface: string;
+  surfaceSubtle: string;
+  surfaceHover?: string;
+  // Ink (text hierarchy)
+  inkPrimary: string;
+  inkSecondary: string;
+  inkMuted: string;
+  // Borders
+  borderSoft: string;
+  borderMedium?: string;
+  // Corner radii (CSS length strings like "6px")
+  radiusSm?: string;
+  radiusMd?: string;
+  radiusLg?: string;
+  // Typography
+  fontSans?: string;       // Google Font name OR a full font-family stack
+  fontMono?: string;
+};

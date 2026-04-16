@@ -10,11 +10,12 @@ import {
   Image,
   Share,
 } from "lucide-react";
-import type { JourneyMap } from "@/lib/frameworks/journey-map/types";
+import type { UniversalMap } from "@/lib/frameworks/universal/types";
 import {
   captureBoardPdfBlob,
   captureBoardPngBlob,
   copyText,
+  loadDesignSystemForExport,
   loadThemeForExport,
   serializeCodeHtml,
   serializeCodeMarkdown,
@@ -24,7 +25,7 @@ import {
   triggerDownload,
 } from "@/lib/export";
 
-type Props = { map: JourneyMap; exportLocked?: boolean };
+type Props = { map: UniversalMap; exportLocked?: boolean };
 
 type ExportItem = {
   label: string;
@@ -94,7 +95,7 @@ export function ExportMenu({ map, exportLocked = false }: Props) {
       icon: <FileJson2 className="h-3.5 w-3.5" />,
       group: "download",
       action: () => {
-        const json = serializeHandoffJson(map, loadThemeForExport());
+        const json = serializeHandoffJson(map, loadThemeForExport(), loadDesignSystemForExport());
         triggerDownload(
           new Blob([json], { type: "application/json;charset=utf-8" }),
           `journey-map-handoff-${timestampTag()}.json`
@@ -126,14 +127,14 @@ export function ExportMenu({ map, exportLocked = false }: Props) {
       },
     },
     {
-      label: "HTML embed",
+      label: "Standalone HTML",
       icon: <Code2 className="h-3.5 w-3.5" />,
       group: "download",
       action: () => {
-        const html = serializeCodeHtml(map, loadThemeForExport());
+        const html = serializeCodeHtml(map, loadThemeForExport(), loadDesignSystemForExport());
         triggerDownload(
           new Blob([html], { type: "text/html;charset=utf-8" }),
-          `journey-map-embed-${timestampTag()}.html`
+          `framework-export-${timestampTag()}.html`
         );
       },
     },
@@ -150,15 +151,15 @@ export function ExportMenu({ map, exportLocked = false }: Props) {
       icon: <ClipboardCopy className="h-3.5 w-3.5" />,
       group: "copy",
       action: async () => {
-        await copyText(serializeHandoffJson(map, loadThemeForExport()));
+        await copyText(serializeHandoffJson(map, loadThemeForExport(), loadDesignSystemForExport()));
       },
     },
     {
-      label: "HTML code",
+      label: "Standalone HTML",
       icon: <ClipboardCopy className="h-3.5 w-3.5" />,
       group: "copy",
       action: async () => {
-        await copyText(serializeCodeHtml(map, loadThemeForExport()));
+        await copyText(serializeCodeHtml(map, loadThemeForExport(), loadDesignSystemForExport()));
       },
     },
     {

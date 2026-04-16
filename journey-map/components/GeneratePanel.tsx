@@ -11,7 +11,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import type { JourneyMap } from "@/lib/frameworks/journey-map/types";
+
 import {
   parseSseFrames,
   type GenerateEvent,
@@ -19,9 +19,15 @@ import {
 
 type Props = {
   frameworkId: string;
-  onSuccess: (map: JourneyMap, summary: string) => void;
+  /** Human-readable framework label, used in the panel header + submit button. */
+  frameworkLabel: string;
+  frameworkOptions: { id: string; label: string }[];
+  onFrameworkChange: (frameworkId: string) => void;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  onSuccess: (map: any, summary: string) => void;
   onBusyChange: (busy: boolean) => void;
-  onProgress?: (event: GenerateEvent<JourneyMap> | null) => void;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  onProgress?: (event: GenerateEvent<any> | null) => void;
   /** Provided by the parent so the GenerationOverlay's Cancel button can also abort. */
   registerCancel?: (cancel: (() => void) | null) => void;
 };
@@ -46,6 +52,9 @@ function hasSupportedExt(name: string): boolean {
 
 export function GeneratePanel({
   frameworkId,
+  frameworkLabel,
+  frameworkOptions,
+  onFrameworkChange,
   onSuccess,
   onBusyChange,
   onProgress,
@@ -184,7 +193,7 @@ export function GeneratePanel({
         const { value, done } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
-        const { events, remainder } = parseSseFrames<JourneyMap>(buffer);
+        const { events, remainder } = parseSseFrames<any>(buffer);
         buffer = remainder;
         for (const event of events) {
           onProgress?.(event);
@@ -228,18 +237,46 @@ export function GeneratePanel({
   }
 
   const buttonLabel = busy
-    ? "Generating…"
+    ? `Generating ${frameworkLabel.toLowerCase()}…`
     : sourcesCount === 0
-      ? "Add a source to generate"
-      : `Generate journey map from ${sourcesCount} source${sourcesCount === 1 ? "" : "s"}`;
+      ? `Add a source to generate ${frameworkLabel.toLowerCase()}`
+      : `Generate ${frameworkLabel} from ${sourcesCount} source${sourcesCount === 1 ? "" : "s"}`;
 
   return (
     <div className="px-5 pt-3 pb-4 space-y-3 overflow-y-auto chat-scroll">
-      <div className="flex items-center gap-1.5">
-        <Sparkles className="h-3.5 w-3.5 text-ink-primary" />
-        <span className="font-mono text-[9px] tracking-[0.22em] uppercase text-ink-muted">
-          From source material
-        </span>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5">
+          <Sparkles className="h-3.5 w-3.5 text-ink-primary" />
+          <span className="font-mono text-[9px] tracking-[0.22em] uppercase text-ink-muted">
+            From source material
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span className="font-mono text-[9px] tracking-[0.18em] uppercase text-ink-muted shrink-0">
+            Into
+          </span>
+          <label className="sr-only" htmlFor="generate-framework-select">
+            Framework type
+          </label>
+          <select
+            id="generate-framework-select"
+            value={frameworkId}
+            onChange={(e) => onFrameworkChange(e.target.value)}
+            disabled={busy}
+            className={[
+              "rounded-md border border-border-soft bg-white/80",
+              "px-2 py-1 text-[11px] font-medium text-ink-primary",
+              "hover:border-border-medium focus:border-ink-primary",
+              "outline-none transition-colors disabled:opacity-60",
+            ].join(" ")}
+          >
+            {frameworkOptions.map((fw) => (
+              <option key={fw.id} value={fw.id}>
+                {fw.label}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {/* Dropzone */}

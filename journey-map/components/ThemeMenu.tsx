@@ -6,20 +6,32 @@ import Prism from "prismjs";
 import "prismjs/components/prism-json";
 import "prismjs/themes/prism.min.css";
 import { Download, Palette, RotateCcw } from "lucide-react";
-import type { BrandInput, ThemeV1 } from "@/lib/theme";
+import type { BrandInput, DesignSystem, ThemeV1 } from "@/lib/theme";
 import {
+  applyDesignSystem,
   applyDesignTokenCssVars,
   applyTheme,
   clearAppliedTheme,
+  clearStoredBrand,
   clearStoredTheme,
   DEFAULT_THEME_V1,
   deriveTheme,
+  isDesignSystemShape,
+  loadStoredBrand,
+  loadStoredDesignSystemJson,
   loadStoredThemeJson,
+  looksLikeCss,
+  parseDesignSystem,
+  parseTailwindCss,
   parseThemeImport,
+  saveStoredBrand,
+  saveStoredDesignSystemJson,
   saveStoredDesignTokenCssVarsJson,
   saveStoredThemeJson,
+  serializeDesignSystem,
   serializeTheme,
 } from "@/lib/theme";
+import { hexToTriplet } from "@/lib/theme/color-math";
 import { triggerDownload } from "@/lib/export";
 import { ThemeUploadPanel } from "@/components/ThemeUploadPanel";
 import { ThemePreviewCard } from "@/components/ThemePreviewCard";
@@ -32,6 +44,46 @@ const DEFAULT_BRAND: BrandInput = {
   primary: "#3b5998",
   secondary: "#fafafa",
   accent: "#5b9bd5",
+};
+
+// Compose a flat DesignSystem from a derived ThemeV1 + the original brand.
+// The primary hex becomes the single --accent; semantic tokens map 1:1.
+function designSystemFromDerivedTheme(theme: ThemeV1, brand: BrandInput): DesignSystem {
+  return {
+    version: 1,
+    accent: hexToTriplet(brand.primary),
+    canvas: theme.semantic.canvas,
+    surface: theme.semantic.surface,
+    surfaceSubtle: theme.semantic.surfaceSubtle,
+    surfaceHover: theme.semantic.surfaceHover,
+    inkPrimary: theme.semantic.inkPrimary,
+    inkSecondary: theme.semantic.inkSecondary,
+    inkMuted: theme.semantic.inkMuted,
+    borderSoft: theme.semantic.borderSoft,
+    borderMedium: theme.semantic.borderMedium,
+    ...(brand.sansFont ? { fontSans: brand.sansFont } : {}),
+    ...(brand.monoFont ? { fontMono: brand.monoFont } : {}),
+  };
+}
+
+// Example DesignSystem JSON shown in the paste editor by default.
+const DS_EXAMPLE: DesignSystem = {
+  version: 1,
+  accent: "#4f46e5",
+  canvas: "#fafafa",
+  surface: "#ffffff",
+  surfaceSubtle: "#f9f8f9",
+  surfaceHover: "#f1f0f2",
+  inkPrimary: "#282a2f",
+  inkSecondary: "#3e424b",
+  inkMuted: "#8c8b8c",
+  borderSoft: "#e8e8ea",
+  borderMedium: "#d4d4d6",
+  radiusSm: "6px",
+  radiusMd: "10px",
+  radiusLg: "16px",
+  fontSans: "Inter",
+  fontMono: "JetBrains Mono",
 };
 
 function escapeHtml(s: string): string {
@@ -124,30 +176,49 @@ export function ThemeMenu() {
   );
   const derivedTheme = useMemo(() => deriveTheme(brand), [brand]);
 
-  // Reset state when dialog opens.
+  // Reset state when dialog opens — but hydrate the Brand pickers from the
+  // last applied brand (if any) so reopening shows the colors the user
+  // actually chose, not DEFAULT_BRAND.
   useEffect(() => {
     if (!open) return;
     setStage("brand");
     setUploadBusy(false);
     setUploadError(null);
-    setPrimary(DEFAULT_BRAND.primary);
-    setSecondary(DEFAULT_BRAND.secondary);
-    setAccent(DEFAULT_BRAND.accent);
-    setSansFont("");
-    setMonoFont("");
-    const raw = loadStoredThemeJson();
-    setDraft(raw ?? serializeTheme(DEFAULT_THEME_V1));
+    const storedBrand = loadStoredBrand();
+    const source = storedBrand ?? DEFAULT_BRAND;
+    setPrimary(source.primary);
+    setSecondary(source.secondary);
+    setAccent(source.accent);
+    setSansFont(source.sansFont ?? "");
+    setMonoFont(source.monoFont ?? "");
+    // Prefer a stored DesignSystem (new preferred shape); fall back to the
+    // legacy theme.v1 blob; fall back to the DS example so new users see the
+    // recommended shape immediately.
+    const storedDs = loadStoredDesignSystemJson();
+    if (storedDs) {
+      setDraft(storedDs);
+    } else {
+      const legacy = loadStoredThemeJson();
+      setDraft(legacy ?? JSON.stringify(DS_EXAMPLE, null, 2));
+    }
     setPasteError(null);
   }, [open]);
 
-  // Apply the derived brand theme.
+  // Apply the derived brand theme + write the flat DesignSystem so the new
+  // path takes precedence on next reload and the --accent token is set.
+  // Also persists the raw hex inputs so reopening the dialog shows the user
+  // the actual colors they picked (not DEFAULT_BRAND).
   const onApplyBrand = useCallback(() => {
+    const ds = designSystemFromDerivedTheme(derivedTheme, brand);
     applyTheme(derivedTheme);
+    applyDesignSystem(ds);
     applyDesignTokenCssVars(undefined);
     saveStoredThemeJson(serializeTheme(derivedTheme));
+    saveStoredDesignSystemJson(serializeDesignSystem(ds));
     saveStoredDesignTokenCssVarsJson(null);
+    saveStoredBrand(brand);
     setOpen(false);
-  }, [derivedTheme]);
+  }, [derivedTheme, brand]);
 
   // Upload → AI extracts brand → populate pickers.
   const onNormalized = useCallback(
@@ -164,32 +235,71 @@ export function ThemeMenu() {
     []
   );
 
-  // Advanced paste: parse locally, apply immediately.
+  // Paste CSS or JSON → apply.
+  //   1. If the draft looks like CSS (starts with :root, @import, etc.) → parseTailwindCss
+  //   2. Flat DesignSystem JSON → parseDesignSystem
+  //   3. Legacy theme.v1 / design-token bundle → parseThemeImport
   const onApplyPaste = useCallback(() => {
     setPasteError(null);
-    try {
-      const json = JSON.parse(draft) as unknown;
-      const parsed = parseThemeImport(json);
+
+    // ── CSS path (Tailwind v4 / shadcn :root blocks) ──
+    if (looksLikeCss(draft)) {
+      const parsed = parseTailwindCss(draft);
       if (!parsed.ok) {
         setPasteError(parsed.error);
         return;
       }
-      applyTheme(parsed.theme);
-      applyDesignTokenCssVars(parsed.designTokenCssVars);
-      saveStoredThemeJson(serializeTheme(parsed.theme));
-      saveStoredDesignTokenCssVarsJson(
-        parsed.designTokenCssVars ? JSON.stringify(parsed.designTokenCssVars) : null
-      );
+      applyDesignSystem(parsed.ds);
+      applyDesignTokenCssVars(undefined);
+      saveStoredDesignSystemJson(serializeDesignSystem(parsed.ds));
+      saveStoredThemeJson("");
+      saveStoredDesignTokenCssVarsJson(null);
       setOpen(false);
-    } catch {
-      setPasteError("Invalid JSON syntax.");
+      return;
     }
+
+    // ── JSON path ──
+    let json: unknown;
+    try {
+      json = JSON.parse(draft) as unknown;
+    } catch {
+      setPasteError("Invalid input — paste a CSS :root block or a JSON theme object.");
+      return;
+    }
+    if (isDesignSystemShape(json)) {
+      const parsed = parseDesignSystem(json);
+      if (!parsed.ok) {
+        setPasteError(parsed.error);
+        return;
+      }
+      applyDesignSystem(parsed.ds);
+      applyDesignTokenCssVars(undefined);
+      saveStoredDesignSystemJson(serializeDesignSystem(parsed.ds));
+      saveStoredThemeJson("");
+      saveStoredDesignTokenCssVarsJson(null);
+      setOpen(false);
+      return;
+    }
+    const parsed = parseThemeImport(json);
+    if (!parsed.ok) {
+      setPasteError(parsed.error);
+      return;
+    }
+    applyTheme(parsed.theme);
+    applyDesignTokenCssVars(parsed.designTokenCssVars);
+    saveStoredThemeJson(serializeTheme(parsed.theme));
+    saveStoredDesignSystemJson(null);
+    saveStoredDesignTokenCssVarsJson(
+      parsed.designTokenCssVars ? JSON.stringify(parsed.designTokenCssVars) : null
+    );
+    setOpen(false);
   }, [draft]);
 
   const onReset = useCallback(() => {
     clearStoredTheme();
+    saveStoredDesignSystemJson(null);
+    clearStoredBrand();
     clearAppliedTheme();
-    applyTheme(DEFAULT_THEME_V1);
     setOpen(false);
   }, []);
 
@@ -245,7 +355,7 @@ export function ThemeMenu() {
                     ? "Brand colors & fonts"
                     : stage === "upload"
                       ? "Upload design system"
-                      : "Paste theme JSON"}
+                      : "Paste CSS or theme JSON"}
                 </p>
               </div>
               <button
@@ -263,7 +373,7 @@ export function ThemeMenu() {
                 [
                   ["brand", "Brand"],
                   ["upload", "Upload"],
-                  ["advanced", "JSON"],
+                  ["advanced", "CSS / JSON"],
                 ] as [Stage, string][]
               ).map(([tab, label]) => (
                 <button
@@ -359,7 +469,7 @@ export function ThemeMenu() {
               {stage === "advanced" && (
                 <div className="px-4 py-3 flex flex-col gap-3">
                   <p className="text-[11px] text-ink-muted leading-snug">
-                    Paste a <span className="font-mono">theme.v1</span> or grouped <span className="font-mono">tokens</span> JSON. Parsed locally — no AI.
+                    Paste a <span className="font-mono">Tailwind CSS / shadcn</span> <code className="font-mono text-[10px] bg-surface-subtle px-1 py-0.5 rounded">:root &#123; &#125;</code> block, or a flat <span className="font-mono">DesignSystem</span> / <span className="font-mono">theme.v1</span> JSON. Parsed locally — no AI.
                   </p>
                   <div className="rounded-xl border border-border-soft max-h-[min(42vh,26rem)] min-h-[220px] overflow-y-auto overflow-x-auto bg-[rgb(var(--surface-subtle)/1)] overscroll-contain [scrollbar-gutter:stable]">
                     <Editor

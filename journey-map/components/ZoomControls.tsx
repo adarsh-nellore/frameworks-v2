@@ -14,7 +14,7 @@ export function ZoomControls({ onFit }: Props) {
   return (
     <div
       data-floating
-      className="fixed bottom-5 right-5 z-30 glass rounded-full px-1.5 py-1 flex items-center gap-0.5 shadow-card"
+      className="fixed top-4 right-5 z-50 glass rounded-full px-1.5 py-1 flex items-center gap-0.5 shadow-card"
     >
       <IconBtn
         label="Zoom out"

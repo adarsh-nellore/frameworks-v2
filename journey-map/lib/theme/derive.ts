@@ -20,6 +20,7 @@ type LaneHueConfig = {
 };
 
 const LANE_HUES: Record<string, LaneHueConfig> = {
+  // Journey-map lanes
   actions:       { hue: (hp) => hp, sat: 65 },
   touchpoints:   { hue: (hp) => shiftHue(hp, 80), sat: 55 },
   thoughts:      { hue: (_hp, ha) => ha, sat: 60 },
@@ -33,6 +34,33 @@ const LANE_HUES: Record<string, LaneHueConfig> = {
   decisions:     { hue: (hp) => shiftHue(hp, 300), sat: 45 },
   artifacts:     { hue: (hp) => hp, sat: 15 },
   neutral:       { hue: (_hp, _ha, hs) => hs, sat: 8 },
+
+  // JTBD canvas — role lanes derive from brand, valence lanes keep semantic hues.
+  functional_jobs:   { hue: (hp) => shiftHue(hp, 180), sat: 55 },
+  emotional_jobs:    { hue: (hp) => shiftHue(hp, 330), sat: 55 },
+  social_jobs:       { hue: (hp) => shiftHue(hp, 280), sat: 55 },
+  desired_outcomes:  { hue: () => 145, sat: 55 },
+  current_solutions: { hue: (hp) => shiftHue(hp, 250), sat: 50 },
+  context_triggers:  { hue: (_hp, ha) => shiftHue(ha, 180), sat: 55 },
+  hiring_criteria:   { hue: () => 145, sat: 50 },
+  firing_criteria:   { hue: () => 0, sat: 55 },
+
+  // Affinity
+  observation:       { hue: (hp) => hp, sat: 55 },
+  quote:             { hue: (_hp, ha) => ha, sat: 60 },
+  insight:           { hue: (_hp, ha) => ha, sat: 60 },
+  need:              { hue: () => 0, sat: 55 },
+  theme:             { hue: (_hp, _ha, hs) => hs, sat: 15 },
+  ungrouped:         { hue: (_hp, _ha, hs) => hs, sat: 5 },
+
+  // Competitive map
+  subject:           { hue: (hp) => hp, sat: 55 },
+  competitor:        { hue: (_hp, _ha, hs) => hs, sat: 10 },
+  criterion:         { hue: (_hp, _ha, hs) => hs, sat: 12 },
+
+  // Matrix quadrants (valence: high = positive, low = muted)
+  quadrant_high:     { hue: () => 145, sat: 55 },
+  quadrant_low:      { hue: (_hp, _ha, hs) => hs, sat: 10 },
 };
 
 function deriveLane(h: number, baseSat: number): LaneTokenSet {
@@ -57,31 +85,36 @@ function deriveSemantic(
   accent: [number, number, number]
 ): SemanticTokens {
   const [hp, sp] = primary;
-  const [hs, ss, ls] = secondary;
-  const [ha, sa] = accent;
+  const [hs, ss] = secondary;
+  void accent;
 
-  // Surfaces from secondary hue.
-  const canvas =        hslToTriplet(hs, ss * 0.3, Math.min(ls + 2, 98));
-  const surface =       hslToTriplet(hs, ss * 0.4, ls);
-  const surfaceSubtle = hslToTriplet(hs, ss * 0.35, Math.max(ls - 2, 85));
-  const surfaceHover =  hslToTriplet(hs, ss * 0.3, Math.max(ls - 5, 80));
+  // KEY FIX — previously we let the secondary's raw lightness drive the
+  // surface tokens, which meant a dark secondary → surface/canvas/subtle
+  // collapse into the same dark color and ink stays at L12 → unreadable
+  // dark-on-dark. The board is a LIGHT canvas by design. The secondary only
+  // contributes hue + a heavily damped saturation. Surface lightnesses are
+  // fixed so the hierarchy canvas < subtle < hover < surface is always
+  // visible, and ink always reads on top.
+  const surface =       hslToTriplet(hs, Math.min(ss * 0.06, 4),  100);
+  const canvas =        hslToTriplet(hs, Math.min(ss * 0.10, 6),  98);
+  const surfaceSubtle = hslToTriplet(hs, Math.min(ss * 0.12, 8),  96);
+  const surfaceHover =  hslToTriplet(hs, Math.min(ss * 0.14, 10), 92);
 
-  // Ink from primary hue darkened.
-  const inkPrimary =   hslToTriplet(hp, sp * 0.3, 10);
-  const inkSecondary = hslToTriplet(hp, sp * 0.2, 20);
-  const inkMuted =     hslToTriplet(hs, ss * 0.15, 55);
+  // Ink from primary hue but fixed-lightness so contrast is guaranteed.
+  const inkPrimary =   hslToTriplet(hp, Math.min(sp * 0.25, 15), 12);
+  const inkSecondary = hslToTriplet(hp, Math.min(sp * 0.18, 12), 28);
+  const inkMuted =     hslToTriplet(hp, Math.min(sp * 0.10, 8),  56);
 
-  // Borders from secondary.
-  const borderSoft =   hslToTriplet(hs, ss * 0.15, 88);
-  const borderMedium = hslToTriplet(hs, ss * 0.15, 80);
+  const borderSoft =   hslToTriplet(hs, Math.min(ss * 0.15, 10), 90);
+  const borderMedium = hslToTriplet(hs, Math.min(ss * 0.18, 12), 82);
 
-  // Washes — subtle brand tints in the background.
-  const washNorth =     hslToTriplet(hp, 15, 88);
-  const washEast =      hslToTriplet(ha, 15, 90);
-  const washSouthWest = hslToTriplet(shiftHue(hp, 90), 12, 89);
-
-  const shadowTint = inkPrimary;
-  const dotGrid = inkPrimary;
+  // These four are NOT painted onto [data-map-page]. The scoped applier skips
+  // them so the page background/washes stay on their :root defaults and don't
+  // change when a brand is applied. We keep the values here for callers that
+  // still want a full SemanticTokens object (e.g. theme.v1 export back-compat).
+  const washNorth = hslToTriplet(hp, 12, 90);
+  const washEast = hslToTriplet(hp, 10, 92);
+  const washSouthWest = hslToTriplet(shiftHue(hp, 90), 8, 91);
 
   return {
     canvas,
@@ -93,11 +126,11 @@ function deriveSemantic(
     inkMuted,
     borderSoft,
     borderMedium,
-    shadowTint,
+    shadowTint: inkPrimary,
     washNorth,
     washEast,
     washSouthWest,
-    dotGrid,
+    dotGrid: inkPrimary,
     glassSurface: surface,
     glassBorder: surface,
     glassInset: surface,
