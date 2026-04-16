@@ -87,7 +87,12 @@ export function RowLabel({
       return;
     }
     onClick(rowId);
-    if (!editing) setEditing(true);
+  }
+
+  function handleDoubleClick(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (agentBusy) return;
+    setEditing(true);
   }
 
   return (
@@ -97,11 +102,13 @@ export function RowLabel({
       ref={sortable.setNodeRef}
       style={style}
       className={[
-        "pl-3 pr-3 flex items-center min-h-[180px] py-5 border-l-2",
+        "pl-3 pr-3 flex items-center min-h-[180px] py-5 border-l-2 rounded-l-xl",
         editing ? "cursor-text" : "cursor-grab active:cursor-grabbing",
         isSelected ? theme.accentBorder : "border-transparent",
+        !editing && "select-none",
       ].join(" ")}
       onClick={handleClick}
+      onDoubleClick={handleDoubleClick}
       {...(editing ? {} : sortable.listeners)}
       {...(editing ? {} : sortable.attributes)}
     >

@@ -54,6 +54,7 @@ export function Cell({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(text);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!editing) setDraft(text);
@@ -71,6 +72,21 @@ export function Cell({
       taRef.current?.focus();
       taRef.current?.select();
     }
+  }, [editing]);
+
+  // Click outside the cell (canvas pan, chrome, another card, etc.): blur so
+  // onBlur commits — canvas/pan often prevents default focus moves otherwise.
+  useEffect(() => {
+    if (!editing) return;
+    function settleIfOutside(e: PointerEvent) {
+      const root = rootRef.current;
+      if (!root) return;
+      const target = e.target as Node | null;
+      if (target && root.contains(target)) return;
+      taRef.current?.blur();
+    }
+    document.addEventListener("pointerdown", settleIfOutside, true);
+    return () => document.removeEventListener("pointerdown", settleIfOutside, true);
   }, [editing]);
 
   const isThisDragging = draggable.isDragging;
@@ -110,12 +126,17 @@ export function Cell({
     `border-l-[3px] ${theme.accentBorder}`,
   ].join(" ");
 
+  const setRootRef = (node: HTMLDivElement | null) => {
+    rootRef.current = node;
+    setRef(node);
+  };
+
   return (
     <div
       data-block
       data-card-el
       data-card-id={cellId}
-      ref={setRef}
+      ref={setRootRef}
       className="w-[280px] shrink-0"
       style={isThisDragging ? { opacity: 0.3 } : undefined}
       onClick={handleClick}
@@ -133,8 +154,10 @@ export function Cell({
             ? "bg-slate-900/[0.06] border-slate-900/70 ring-2 ring-slate-900/40"
             : isSelected
             ? "bg-white border-slate-900 ring-2 ring-slate-900/85 ring-offset-2 ring-offset-canvas shadow-card-hover"
-            : isRowSelected || isColumnSelected
-            ? "bg-white/60 border-border-medium shadow-card"
+            : isRowSelected
+            ? "bg-ink-primary/[0.06] border-ink-primary/45 ring-2 ring-ink-primary/30 ring-offset-2 ring-offset-canvas shadow-card"
+            : isColumnSelected
+            ? "bg-ink-primary/[0.05] border-ink-primary/40 ring-2 ring-ink-primary/25 ring-offset-2 ring-offset-canvas shadow-card"
             : idleClasses,
         ].join(" ")}
       >

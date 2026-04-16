@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { applyTheme, loadStoredThemeJson, parseThemeV1 } from "@/lib/theme";
 import { Canvas } from "@/components/Canvas";
 import { Copilot } from "@/components/Copilot";
 import { TopBar } from "@/components/TopBar";
@@ -103,6 +104,18 @@ function PageInner() {
     setMap((m) => ({ ...m, title }));
   }, []);
 
+  // Hydrate saved design tokens before paint (localStorage).
+  useLayoutEffect(() => {
+    const raw = loadStoredThemeJson();
+    if (!raw) return;
+    try {
+      const parsed = parseThemeV1(JSON.parse(raw) as unknown);
+      if (parsed.ok) applyTheme(parsed.theme);
+    } catch {
+      /* ignore corrupt storage */
+    }
+  }, []);
+
   return (
     <div className="fixed inset-0">
       <Canvas>
@@ -126,7 +139,7 @@ function PageInner() {
         </div>
       </Canvas>
 
-      <TopBar title={map.title} onTitleChange={onTitleChange} data={map} />
+      <TopBar title={map.title} onTitleChange={onTitleChange} data={map} map={map} />
 
       <Copilot
         frameworkId={framework.id}

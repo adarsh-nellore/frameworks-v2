@@ -2,15 +2,18 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Check, ClipboardCopy } from "lucide-react";
+import type { JourneyMap } from "@/lib/frameworks/journey-map/types";
+import { ThemeMenu } from "@/components/ThemeMenu";
 
 type Props = {
   title: string;
   onTitleChange: (title: string) => void;
   /** Anything serializable; copied to clipboard as JSON. */
   data: unknown;
+  map: JourneyMap;
 };
 
-export function TopBar({ title, onTitleChange, data }: Props) {
+export function TopBar({ title, onTitleChange, data, map }: Props) {
   const [copied, setCopied] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(title);
@@ -79,6 +82,7 @@ export function TopBar({ title, onTitleChange, data }: Props) {
           {title}
         </button>
       )}
+      <ThemeMenu map={map} />
       <button
         type="button"
         onClick={copyJson}

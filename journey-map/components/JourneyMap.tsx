@@ -109,7 +109,15 @@ export function JourneyMap({
       const t = e.target as HTMLElement;
       if (
         !t.closest(
-          "[data-block],[data-row],[data-stage],[data-floating],[data-copilot]"
+          [
+            "[data-block]",
+            "[data-row]",
+            "[data-stage]",
+            "[data-empty-slot]",
+            "[data-floating]",
+            "[data-copilot]",
+            "[data-edge-zone]",
+          ].join(",")
         )
       )
         onSelectionChange(null);
@@ -412,7 +420,12 @@ export function JourneyMap({
               {map.rows.map((row) => (
                 <div
                   key={row.id}
-                  className="flex items-stretch"
+                  className={[
+                    "flex items-stretch rounded-2xl transition-[background-color,box-shadow] duration-150",
+                    selection?.type === "row" && selection.id === row.id
+                      ? "bg-ink-primary/[0.07] ring-2 ring-ink-primary/35 ring-offset-2 ring-offset-surface shadow-sm"
+                      : "",
+                  ].join(" ")}
                   data-row-shell
                 >
                   <div className="shrink-0" style={{ width: LABEL_W }}>

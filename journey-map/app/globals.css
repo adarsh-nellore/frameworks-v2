@@ -26,11 +26,116 @@
   --border-soft: 232 232 234;     /* #e8e8ea */
   --border-medium: 212 212 214;   /* #d4d4d6 */
 
-  /* Elevation — very subtle */
-  --shadow-card: 0 1px 2px rgb(40 42 47 / 0.04);
-  --shadow-card-hover: 0 4px 12px rgb(40 42 47 / 0.08);
-  --shadow-panel: 0 1px 3px rgb(40 42 47 / 0.04),
-                  0 8px 24px -8px rgb(40 42 47 / 0.08);
+  /* Shared shadow tint (overridable by theme JSON) */
+  --shadow-tint: 40 42 47;
+  --shadow-card: 0 1px 2px rgb(var(--shadow-tint) / 0.04);
+  --shadow-card-hover: 0 4px 12px rgb(var(--shadow-tint) / 0.08);
+  --shadow-panel: 0 1px 3px rgb(var(--shadow-tint) / 0.04),
+                  0 8px 24px -8px rgb(var(--shadow-tint) / 0.08);
+
+  /* Canvas washes (body background) */
+  --wash-north: 215 222 235;
+  --wash-east: 235 225 240;
+  --wash-south-west: 225 235 230;
+  --dot-grid: 40 42 47;
+
+  /* Glass surfaces */
+  --glass-surface: 255 255 255;
+  --glass-border: 255 255 255;
+  --glass-inset: 255 255 255;
+
+  /* Row-kind lane tokens (defaults; theme import overrides via JS) */
+  --lane-actions-accent: 2 132 199;
+  --lane-actions-border: 56 189 248;
+  --lane-actions-tint: 240 249 255;
+  --lane-actions-chip-bg: 224 242 254;
+  --lane-actions-chip-text: 3 105 161;
+  --lane-actions-highlight-bg: 186 230 253;
+  --lane-actions-highlight-text: 12 74 110;
+  --lane-touchpoints-accent: 124 58 237;
+  --lane-touchpoints-border: 167 139 250;
+  --lane-touchpoints-tint: 245 243 255;
+  --lane-touchpoints-chip-bg: 237 233 254;
+  --lane-touchpoints-chip-text: 109 40 217;
+  --lane-touchpoints-highlight-bg: 221 214 254;
+  --lane-touchpoints-highlight-text: 76 29 149;
+  --lane-thoughts-accent: 217 119 6;
+  --lane-thoughts-border: 251 191 36;
+  --lane-thoughts-tint: 255 251 235;
+  --lane-thoughts-chip-bg: 254 243 199;
+  --lane-thoughts-chip-text: 180 83 9;
+  --lane-thoughts-highlight-bg: 253 230 138;
+  --lane-thoughts-highlight-text: 120 53 15;
+  --lane-emotions-accent: 225 29 72;
+  --lane-emotions-border: 251 113 133;
+  --lane-emotions-tint: 255 241 242;
+  --lane-emotions-chip-bg: 255 228 230;
+  --lane-emotions-chip-text: 190 18 60;
+  --lane-emotions-highlight-bg: 254 205 211;
+  --lane-emotions-highlight-text: 136 19 55;
+  --lane-pain_points-accent: 220 38 38;
+  --lane-pain_points-border: 248 113 113;
+  --lane-pain_points-tint: 254 242 242;
+  --lane-pain_points-chip-bg: 254 226 226;
+  --lane-pain_points-chip-text: 185 28 28;
+  --lane-pain_points-highlight-bg: 254 202 202;
+  --lane-pain_points-highlight-text: 127 29 29;
+  --lane-opportunities-accent: 5 150 105;
+  --lane-opportunities-border: 52 211 153;
+  --lane-opportunities-tint: 236 253 245;
+  --lane-opportunities-chip-bg: 209 250 229;
+  --lane-opportunities-chip-text: 4 120 87;
+  --lane-opportunities-highlight-bg: 167 243 208;
+  --lane-opportunities-highlight-text: 6 78 59;
+  --lane-metrics-accent: 13 148 136;
+  --lane-metrics-border: 45 212 191;
+  --lane-metrics-tint: 240 253 250;
+  --lane-metrics-chip-bg: 204 251 241;
+  --lane-metrics-chip-text: 15 118 110;
+  --lane-metrics-highlight-bg: 153 246 228;
+  --lane-metrics-highlight-text: 19 78 74;
+  --lane-stakeholders-accent: 79 70 229;
+  --lane-stakeholders-border: 129 140 248;
+  --lane-stakeholders-tint: 238 242 255;
+  --lane-stakeholders-chip-bg: 224 231 255;
+  --lane-stakeholders-chip-text: 67 56 202;
+  --lane-stakeholders-highlight-bg: 199 210 254;
+  --lane-stakeholders-highlight-text: 49 46 129;
+  --lane-systems-accent: 63 63 70;
+  --lane-systems-border: 161 161 170;
+  --lane-systems-tint: 250 250 250;
+  --lane-systems-chip-bg: 228 228 231;
+  --lane-systems-chip-text: 39 39 42;
+  --lane-systems-highlight-bg: 212 212 216;
+  --lane-systems-highlight-text: 24 24 27;
+  --lane-channels-accent: 8 145 178;
+  --lane-channels-border: 34 211 238;
+  --lane-channels-tint: 236 254 255;
+  --lane-channels-chip-bg: 207 250 254;
+  --lane-channels-chip-text: 14 116 144;
+  --lane-channels-highlight-bg: 165 243 252;
+  --lane-channels-highlight-text: 22 78 99;
+  --lane-decisions-accent: 192 38 211;
+  --lane-decisions-border: 232 121 249;
+  --lane-decisions-tint: 253 244 255;
+  --lane-decisions-chip-bg: 250 232 255;
+  --lane-decisions-chip-text: 162 28 175;
+  --lane-decisions-highlight-bg: 245 208 254;
+  --lane-decisions-highlight-text: 112 26 117;
+  --lane-artifacts-accent: 87 83 78;
+  --lane-artifacts-border: 168 162 158;
+  --lane-artifacts-tint: 250 250 249;
+  --lane-artifacts-chip-bg: 231 229 228;
+  --lane-artifacts-chip-text: 68 64 60;
+  --lane-artifacts-highlight-bg: 214 211 209;
+  --lane-artifacts-highlight-text: 41 37 36;
+  --lane-neutral-accent: 100 116 139;
+  --lane-neutral-border: 203 213 225;
+  --lane-neutral-tint: 255 255 255;
+  --lane-neutral-chip-bg: 241 245 249;
+  --lane-neutral-chip-text: 51 65 85;
+  --lane-neutral-highlight-bg: 226 232 240;
+  --lane-neutral-highlight-text: 15 23 42;
 }
 
 html,
@@ -53,9 +158,9 @@ body {
  */
 body {
   background:
-    radial-gradient(ellipse 80% 50% at 50% -10%, rgb(215 222 235 / 0.35), transparent 60%),
-    radial-gradient(ellipse 70% 45% at 90% 110%, rgb(235 225 240 / 0.35), transparent 60%),
-    radial-gradient(ellipse 60% 40% at 5% 95%, rgb(225 235 230 / 0.25), transparent 60%),
+    radial-gradient(ellipse 80% 50% at 50% -10%, rgb(var(--wash-north) / 0.35), transparent 60%),
+    radial-gradient(ellipse 70% 45% at 90% 110%, rgb(var(--wash-east) / 0.35), transparent 60%),
+    radial-gradient(ellipse 60% 40% at 5% 95%, rgb(var(--wash-south-west) / 0.25), transparent 60%),
     rgb(var(--canvas));
 }
 body::before {
@@ -65,7 +170,7 @@ body::before {
   pointer-events: none;
   background-image: radial-gradient(
     circle at 1px 1px,
-    rgb(40 42 47 / 0.05) 1px,
+    rgb(var(--dot-grid) / 0.05) 1px,
     transparent 0
   );
   background-size: 24px 24px;
@@ -79,24 +184,24 @@ body::before {
  *                    legibility of text must win over transparency.
  */
 .glass {
-  background: rgb(255 255 255 / 0.62);
+  background: rgb(var(--glass-surface) / 0.62);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border: 1px solid rgb(255 255 255 / 0.55);
+  border: 1px solid rgb(var(--glass-border) / 0.55);
   box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.55),
-    0 6px 24px -10px rgb(40 42 47 / 0.18),
-    0 2px 6px -2px rgb(40 42 47 / 0.06);
+    inset 0 1px 0 rgb(var(--glass-inset) / 0.55),
+    0 6px 24px -10px rgb(var(--shadow-tint) / 0.18),
+    0 2px 6px -2px rgb(var(--shadow-tint) / 0.06);
 }
 .glass-strong {
-  background: rgb(255 255 255 / 0.78);
+  background: rgb(var(--glass-surface) / 0.78);
   backdrop-filter: blur(28px) saturate(180%);
   -webkit-backdrop-filter: blur(28px) saturate(180%);
-  border: 1px solid rgb(255 255 255 / 0.65);
+  border: 1px solid rgb(var(--glass-border) / 0.65);
   box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.65),
-    0 12px 40px -10px rgb(40 42 47 / 0.22),
-    0 2px 8px -2px rgb(40 42 47 / 0.06);
+    inset 0 1px 0 rgb(var(--glass-inset) / 0.65),
+    0 12px 40px -10px rgb(var(--shadow-tint) / 0.22),
+    0 2px 8px -2px rgb(var(--shadow-tint) / 0.06);
 }
 
 /* Scrollbar polish for the canvas and chat */

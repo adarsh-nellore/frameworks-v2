@@ -63,14 +63,19 @@ export function StageHeader({
   }
   function handleClick(e: React.MouseEvent) {
     e.stopPropagation();
-    const additive = e.metaKey || e.shiftKey || e.ctrlKey;
     if (agentBusy) {
       onClick(stageId, e);
       return;
     }
     onClick(stageId, e);
-    // Modifier+click: multi-select stages only; plain click also selects one stage then edits label.
-    if (!additive && !editing) setEditing(true);
+  }
+
+  function handleDoubleClick(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (agentBusy) return;
+    const additive = e.metaKey || e.shiftKey || e.ctrlKey;
+    if (additive) return;
+    setEditing(true);
   }
 
   const s = getScale();
@@ -97,8 +102,10 @@ export function StageHeader({
       className={[
         "w-[280px] shrink-0",
         editing ? "cursor-text" : "cursor-grab active:cursor-grabbing",
+        !editing && "select-none",
       ].join(" ")}
       onClick={handleClick}
+      onDoubleClick={handleDoubleClick}
       {...(editing ? {} : sortable.listeners)}
       {...(editing ? {} : sortable.attributes)}
     >
