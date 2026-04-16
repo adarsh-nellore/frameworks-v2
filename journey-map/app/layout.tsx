@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
+import { CanvasProvider } from "@/lib/canvas/context";
 
 const sans = Inter({
   subsets: ["latin"],
@@ -13,8 +14,8 @@ const mono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Journey Map",
-  description: "Empty journey map template.",
+  title: "Frameworks",
+  description: "Prompt-driven framework builder.",
 };
 
 export default function RootLayout({
@@ -24,7 +25,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className={`${sans.variable} ${mono.variable}`}>
-      <body className="antialiased font-sans">{children}</body>
+      <body className="antialiased font-sans">
+        <CanvasProvider>{children}</CanvasProvider>
+      </body>
     </html>
   );
 }

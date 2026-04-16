@@ -1,250 +1,238 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import {
-  applyDesignTokenCssVars,
-  applyTheme,
-  loadStoredDesignTokenCssVarsJson,
-  loadStoredThemeJson,
-  parseThemeImport,
-} from "@/lib/theme";
-import { Canvas } from "@/components/Canvas";
-import { Copilot } from "@/components/Copilot";
-import { GenerationOverlay } from "@/components/GenerationOverlay";
-import { TopBar } from "@/components/TopBar";
-import { ZoomControls } from "@/components/ZoomControls";
-import { getFramework, listFrameworks } from "@/lib/frameworks";
-import type { AnyFrameworkModule } from "@/lib/frameworks";
-import type { JourneyMapSelection } from "@/lib/frameworks/journey-map/types";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { Sparkles, ArrowRight } from "lucide-react";
+import { PromptComposer, type PromptSubmitPayload } from "@/components/PromptComposer";
+import { FrameworkLibrary } from "@/components/FrameworkLibrary";
+import { useCanvas } from "@/lib/canvas/context";
+import { useGenerateStream } from "@/lib/hooks/use-generate-stream";
+import { useDescribeFramework } from "@/lib/hooks/use-describe-framework";
+import { listFrameworks, isDynamicFramework } from "@/lib/frameworks";
+import type { UniversalMap } from "@/lib/frameworks/universal/types";
+import type { FrameworkConfig } from "@/lib/frameworks/universal/config";
 import type { GenerateEvent } from "@/lib/pipeline/events";
-import { ZoomProvider, useZoom } from "@/lib/zoom-context";
 
-const DEFAULT_FRAMEWORK_ID = "journey-map";
-const STORAGE_KEY = "framework-id";
+// ──────────────────────────────────────────────────────────────────────────────
+// Landing page ("/")
+//
+// Prompt-first UX:
+//  - User types a prompt + optionally uploads files/URLs + optionally picks a
+//    framework from the right rail.
+//  - No framework picked → /api/framework-describe synthesizes a structure and
+//    populates it in one shot (~5–10s). Single-request, non-streaming.
+//  - Framework picked → /api/generate streams events for the user to watch.
+//
+// On success, we addBoard() into CanvasContext (survives router navigation
+// because the provider is in app/layout.tsx) and router.push("/canvas").
+// ──────────────────────────────────────────────────────────────────────────────
 
-export default function Page() {
-  return (
-    <ZoomProvider>
-      <PageInner />
-    </ZoomProvider>
-  );
-}
+export default function LandingPage() {
+  const router = useRouter();
+  const { addBoard, boards } = useCanvas();
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [progressEvent, setProgressEvent] = useState<GenerateEvent<UniversalMap> | null>(null);
+  const [mounted, setMounted] = useState(false);
+  const [isNarrow, setIsNarrow] = useState(false);
 
-function PageInner() {
-  const [frameworkId, setFrameworkId] = useState<string>(() => {
-    if (typeof window !== "undefined") {
-      const params = new URLSearchParams(window.location.search);
-      const urlFw = params.get("framework");
-      if (urlFw) {
-        try { getFramework(urlFw); return urlFw; } catch { /* fall through */ }
-      }
-      const stored = sessionStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        try { getFramework(stored); return stored; } catch { /* fall through */ }
-      }
-    }
-    return DEFAULT_FRAMEWORK_ID;
+  const existingIds = useMemo(() => listFrameworks().map((fw) => fw.id), []);
+
+  const describe = useDescribeFramework();
+  const generate = useGenerateStream({
+    onProgress: setProgressEvent,
+    onSuccess: () => {
+      // onSuccess is wired per-submit below; setting null here just clears
+      // any residual progress event if the user stays on the landing.
+      setProgressEvent(null);
+    },
   });
 
-  const framework = getFramework(frameworkId);
+  const busy = describe.busy || generate.busy;
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [map, setMap] = useState<any>(framework.seed);
-  const [selection, setSelection] = useState<unknown>(null);
-  const [busy, setBusy] = useState(false);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [generation, setGeneration] = useState<GenerateEvent<any> | null>(null);
-  const cancelGenerationRef = useRef<(() => void) | null>(null);
-  const stageRef = useRef<HTMLDivElement | null>(null);
-  const { fitToContent } = useZoom();
-  const [frameworkMenuOpen, setFrameworkMenuOpen] = useState(false);
-
-  // Persist selected framework to session storage and URL
   useEffect(() => {
-    sessionStorage.setItem(STORAGE_KEY, frameworkId);
-    const url = new URL(window.location.href);
-    if (frameworkId !== DEFAULT_FRAMEWORK_ID) {
-      url.searchParams.set("framework", frameworkId);
-    } else {
-      url.searchParams.delete("framework");
-    }
-    window.history.replaceState(null, "", url.toString());
-  }, [frameworkId]);
+    setMounted(true);
+    const check = () => setIsNarrow(window.innerWidth < 900);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
 
-  function switchFramework(fw: AnyFrameworkModule) {
-    setFrameworkMenuOpen(false);
-    if (fw.id === frameworkId) return;
-    setFrameworkId(fw.id);
-    setMap(fw.seed);
-    setSelection(null);
-    setGeneration(null);
+  async function handleSubmit(payload: PromptSubmitPayload) {
+    const hasSources = payload.files.length > 0 || payload.urls.length > 0;
+    const hasText = payload.text.length > 0;
+
+    if (!selectedId) {
+      // Custom synthesis path — single-call describe. Requires a prompt.
+      if (!hasText) return;
+      if (hasSources) {
+        // Phase 1 MVP: describe doesn't ingest files. Prompt user to pick a
+        // framework first if they want to use source files.
+        alert("Pick a framework from the right to generate from uploaded files. The custom (prompt-only) flow can't read files yet.");
+        return;
+      }
+      const result = await describe.submit(payload.text, existingIds);
+      if (!result) return;
+      const board = addBoard({
+        frameworkId: result.config.id,
+        customConfig: result.config,
+        title: result.populatedMap.title || result.config.label,
+        map: result.populatedMap,
+        makeActive: true,
+      });
+      router.push(`/canvas?b=${board.id}`);
+      return;
+    }
+
+    // Framework selected → /api/generate streams, wait for completion, then navigate.
+    // (Streaming while navigating is deferred to Phase 2 — it requires hoisting
+    // the generation state into CanvasContext so it survives route changes.)
+    const fw = listFrameworks().find((f) => f.id === selectedId);
+    if (!fw) return;
+
+    const result = await generate.submit({
+      frameworkId: fw.id,
+      text: hasText ? payload.text : undefined,
+      files: payload.files,
+      urls: payload.urls,
+      title: payload.title,
+      persona: payload.persona,
+      fidelityMode: payload.fidelityMode,
+    });
+    if (!result) return;
+
+    const board = addBoard({
+      frameworkId: fw.id,
+      customConfig: isDynamicFramework(fw.id) ? (fw.config as FrameworkConfig) : undefined,
+      title: result.map.title || payload.title || fw.seed.title || fw.label,
+      map: result.map,
+      makeActive: true,
+    });
+    router.push(`/canvas?b=${board.id}`);
   }
 
-  const generationActive =
-    generation !== null &&
-    generation.phase !== "result" &&
-    generation.phase !== "error";
-
-  const registerCancel = useCallback((cancel: (() => void) | null) => {
-    cancelGenerationRef.current = cancel;
-  }, []);
-
-  const onGenerationCancel = useCallback(() => {
-    cancelGenerationRef.current?.();
-    setGeneration(null);
-  }, []);
-
-  const Component = framework.Component;
-
-  const fitNow = useCallback(() => {
-    const node = stageRef.current;
-    if (!node) return;
-    fitToContent(
-      { width: node.scrollWidth, height: node.scrollHeight },
-      { width: window.innerWidth, height: window.innerHeight },
-      0.86
+  // Desktop-only notice for narrow viewports
+  if (mounted && isNarrow) {
+    return (
+      <div className="fixed inset-0 flex items-center justify-center p-8">
+        <div className="max-w-sm text-center space-y-3">
+          <Sparkles className="h-6 w-6 text-ink-primary mx-auto" />
+          <h1 className="text-[18px] font-medium text-ink-primary">Use a desktop</h1>
+          <p className="text-[13px] text-ink-muted leading-relaxed">
+            Frameworks is a workspace for designing and iterating on strategic canvases. It's built for desktop — open it on a wider screen to get started.
+          </p>
+        </div>
+      </div>
     );
-  }, [fitToContent]);
+  }
 
-  // Re-fit when we switch frameworks
-  const prevFrameworkId = useRef(frameworkId);
-  useLayoutEffect(() => {
-    if (prevFrameworkId.current !== frameworkId) {
-      prevFrameworkId.current = frameworkId;
-      requestAnimationFrame(fitNow);
-    }
-  }, [frameworkId, fitNow]);
-
-  useEffect(() => {
-    const onResize = () => fitNow();
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, [fitNow]);
-
-  // Close framework menu on outside click
-  useEffect(() => {
-    if (!frameworkMenuOpen) return;
-    function handler(e: MouseEvent) {
-      const t = e.target as Element | null;
-      if (!t?.closest("[data-framework-menu]")) setFrameworkMenuOpen(false);
-    }
-    document.addEventListener("pointerdown", handler);
-    return () => document.removeEventListener("pointerdown", handler);
-  }, [frameworkMenuOpen]);
-
-  const onTitleChange = useCallback((title: string) => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    setMap((m: any) => ({ ...m, title }));
-  }, []);
-
-  useLayoutEffect(() => {
-    try {
-      const raw = loadStoredThemeJson();
-      if (raw) {
-        try {
-          const parsed = parseThemeImport(JSON.parse(raw) as unknown);
-          if (parsed.ok) applyTheme(parsed.theme);
-        } catch { /* ignore corrupt storage */ }
-      }
-      const extra = loadStoredDesignTokenCssVarsJson();
-      if (extra) {
-        try {
-          applyDesignTokenCssVars(JSON.parse(extra) as Record<string, string>);
-        } catch {
-          applyDesignTokenCssVars(undefined);
-        }
-      } else {
-        applyDesignTokenCssVars(undefined);
-      }
-    } catch {
-      applyDesignTokenCssVars(undefined);
-    }
-  }, []);
-
-  const allFrameworks = listFrameworks();
+  const describeError = describe.error;
+  const generateError = generate.error;
+  const combinedError = describeError || generateError;
 
   return (
-    <div className="fixed inset-0">
-      <Canvas locked={generationActive}>
-        <div ref={stageRef} className="p-12">
-          <div
-            data-map-page
-            className={[
-              "inline-block rounded-3xl bg-surface",
-              "px-10 py-10 md:px-12 md:py-12",
-              "shadow-panel ring-1 ring-border-soft/70",
-            ].join(" ")}
-          >
-            <Component
-              map={map}
-              onChange={setMap}
-              busy={busy}
-              selection={selection}
-              onSelectionChange={setSelection}
-            />
+    <div className="min-h-dvh" style={{ background: "rgb(var(--canvas))" }}>
+      <div className="mx-auto max-w-[1200px] px-6 lg:px-8 py-10 lg:py-14">
+        {/* Header */}
+        <header className="flex items-center justify-between mb-10 lg:mb-14">
+          <div className="flex items-center gap-2">
+            <div className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-ink-primary text-white">
+              <Sparkles className="h-4 w-4" />
+            </div>
+            <span className="font-medium text-[15px] text-ink-primary">Frameworks</span>
           </div>
+          {boards.length > 0 && (
+            <button
+              onClick={() => router.push("/canvas")}
+              className="inline-flex items-center gap-1.5 text-[12px] text-ink-secondary hover:text-ink-primary transition-colors"
+            >
+              Open workspace
+              <ArrowRight className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </header>
+
+        {/* Main two-column layout */}
+        <div className="grid lg:grid-cols-[1fr_320px] gap-6 lg:gap-10">
+          {/* Left: prompt hero */}
+          <main className="space-y-6">
+            <div className="space-y-3">
+              <h1 className="text-[32px] lg:text-[40px] font-medium text-ink-primary leading-tight tracking-tight">
+                Describe what you want to make.
+              </h1>
+              <p className="text-[14px] lg:text-[15px] text-ink-secondary leading-relaxed max-w-[560px]">
+                Start with an open prompt. Drop files for context. Or pick a framework template from the library to structure your thinking.
+              </p>
+            </div>
+
+            <div className="rounded-3xl bg-surface shadow-panel ring-1 ring-border-soft/70 p-5 lg:p-6">
+              <PromptComposer
+                size="hero"
+                busy={busy}
+                error={combinedError}
+                placeholder={
+                  selectedId
+                    ? "Describe your source material, persona, or theme. Or drop files below."
+                    : "A 2×2 matrix for prioritizing features by impact and effort… a stakeholder map by influence and interest…"
+                }
+                submitLabel={selectedId ? "Generate from sources" : "Design and generate framework"}
+                onSubmit={handleSubmit}
+                headerSlot={
+                  selectedId ? (
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-mono text-[9px] uppercase tracking-[0.22em] text-ink-muted">
+                        Using
+                      </span>
+                      <span className="text-[12px] font-medium text-ink-primary">
+                        {listFrameworks().find((fw) => fw.id === selectedId)?.label ?? selectedId}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedId(null)}
+                        className="text-[11px] text-ink-muted hover:text-ink-primary underline-offset-2 hover:underline"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  ) : (
+                    <span className="font-mono text-[9px] uppercase tracking-[0.22em] text-ink-muted">
+                      Default: custom synthesis
+                    </span>
+                  )
+                }
+              />
+            </div>
+
+            {/* Progress / streaming hint while describe is running */}
+            {describe.busy && (
+              <div className="rounded-xl bg-white/80 border border-border-soft px-4 py-3 text-[13px] text-ink-secondary inline-flex items-center gap-3">
+                <span className="inline-flex items-center gap-1">
+                  <span className="h-1.5 w-1.5 rounded-full bg-ink-primary/60 animate-pulse [animation-delay:0ms]" />
+                  <span className="h-1.5 w-1.5 rounded-full bg-ink-primary/60 animate-pulse [animation-delay:150ms]" />
+                  <span className="h-1.5 w-1.5 rounded-full bg-ink-primary/60 animate-pulse [animation-delay:300ms]" />
+                </span>
+                <span>Designing framework structure and filling in content…</span>
+              </div>
+            )}
+            {progressEvent && progressEvent.phase !== "result" && progressEvent.phase !== "error" && (
+              <div className="rounded-xl bg-white/80 border border-border-soft px-4 py-3 text-[13px] text-ink-secondary">
+                {progressEvent.phase === "ingesting" && "Reading source material…"}
+                {progressEvent.phase === "extracting" && "Extracting key details…"}
+                {progressEvent.phase === "structuring" && "Structuring into a framework…"}
+              </div>
+            )}
+          </main>
+
+          {/* Right: framework library rail */}
+          <aside className="lg:sticky lg:top-8 self-start">
+            <div className="rounded-2xl bg-white/70 shadow-card ring-1 ring-border-soft/70 p-4 lg:p-5 max-h-[calc(100dvh-8rem)] overflow-y-auto chat-scroll">
+              <FrameworkLibrary
+                selectedId={selectedId}
+                onSelect={setSelectedId}
+              />
+            </div>
+          </aside>
         </div>
-      </Canvas>
-
-      {/* Framework switcher — fixed bottom-left */}
-      <div
-        data-framework-menu
-        className="fixed bottom-4 left-4 z-40"
-      >
-        {frameworkMenuOpen && (
-          <div className="mb-2 flex flex-col gap-1 rounded-xl bg-white shadow-lg ring-1 ring-slate-200 p-1.5">
-            {allFrameworks.map((fw) => (
-              <button
-                key={fw.id}
-                onClick={() => switchFramework(fw)}
-                className={[
-                  "rounded-lg px-3 py-2 text-left text-sm transition",
-                  fw.id === frameworkId
-                    ? "bg-indigo-100 text-indigo-700 font-medium"
-                    : "text-slate-700 hover:bg-slate-100",
-                ].join(" ")}
-              >
-                {fw.label}
-              </button>
-            ))}
-          </div>
-        )}
-        <button
-          onClick={() => setFrameworkMenuOpen((o) => !o)}
-          className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-md ring-1 ring-slate-200 hover:ring-slate-300 transition"
-        >
-          <span className="text-slate-400">⊞</span>
-          {framework.label}
-          <span className="text-slate-400 text-xs">{frameworkMenuOpen ? "▲" : "▼"}</span>
-        </button>
       </div>
-
-      <TopBar
-        title={map.title ?? ""}
-        onTitleChange={onTitleChange}
-        map={map}
-        exportLocked={generationActive}
-      />
-
-      <Copilot
-        frameworkId={framework.id}
-        map={map}
-        onMapChange={setMap}
-        exampleInstructions={framework.exampleInstructions}
-        onBusyChange={setBusy}
-        focus={selection as JourneyMapSelection | null}
-        onFocusClear={() => setSelection(null)}
-        onGenerationProgress={setGeneration}
-        registerGenerationCancel={registerCancel}
-      />
-
-      <ZoomControls onFit={fitNow} />
-
-      <GenerationOverlay
-        active={generationActive}
-        progress={generation}
-        onCancel={onGenerationCancel}
-      />
     </div>
   );
 }
