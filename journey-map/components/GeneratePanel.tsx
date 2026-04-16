@@ -32,7 +32,7 @@ type Props = {
   registerCancel?: (cancel: (() => void) | null) => void;
 };
 
-const ACCEPTED_EXTS = [".pdf", ".docx", ".txt", ".md", ".json"];
+const ACCEPTED_EXTS = [".pdf", ".docx", ".txt", ".md", ".json", ".csv", ".tsv"];
 const ACCEPTED_ATTR = ACCEPTED_EXTS.join(",");
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 50 * 1024 * 1024;
@@ -299,7 +299,7 @@ export function GeneratePanel({
           Drop transcripts, personas, user stories, research notes
         </div>
         <div className="mt-1 font-mono text-[9px] tracking-widest uppercase text-ink-muted">
-          .pdf .docx .txt .md .json
+          .pdf .docx .txt .md .json .csv .tsv
         </div>
         <input
           ref={fileInputRef}

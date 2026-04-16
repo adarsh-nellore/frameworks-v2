@@ -30,7 +30,7 @@ const EMPTY_MAP: UniversalMap = {
   cards: [],
 };
 
-const ACCEPTED_EXTS = [".pdf", ".docx", ".txt", ".md", ".json"];
+const ACCEPTED_EXTS = [".pdf", ".docx", ".txt", ".md", ".json", ".csv", ".tsv"];
 const ACCEPTED_ATTR = ACCEPTED_EXTS.join(",");
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 50 * 1024 * 1024;
@@ -141,12 +141,10 @@ export default function LandingPage() {
 
     if (!selectedId) {
       if (!hasText) return;
-      if (hasSources) {
-        setLocalError("Pick a framework to generate from uploaded files. The custom (prompt-only) flow can't read files yet.");
-        return;
-      }
       // Fire-and-forget: create a pending board, start describe, navigate now.
       // The context streams results into the board while /canvas renders the skeleton.
+      // Files + URLs are forwarded to the describe endpoint, which fetches URLs
+      // via Jina Reader and passes all source text into the synthesis prompt.
       const board = addBoard({
         frameworkId: "journey-map", // placeholder — canvas ignores it while pending
         title: (title || text.slice(0, 60)).trim() || "New framework",
@@ -155,7 +153,10 @@ export default function LandingPage() {
         pendingPrompt: text,
         makeActive: true,
       });
-      void startDescribe(board.id, text, existingIds);
+      void startDescribe(board.id, text, existingIds, {
+        files: hasSources ? files : undefined,
+        urls: hasSources ? urls : undefined,
+      });
       router.push(`/canvas?b=${board.id}`);
       return;
     }

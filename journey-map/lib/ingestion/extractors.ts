@@ -19,6 +19,11 @@ export function extensionOf(name: string): string {
 
 export const SUPPORTED_EXTENSIONS = [
   "pdf", "docx", "txt", "md", "json", "css", "html", "htm",
+  // Tabular data: CSV / TSV. Useful for UX researchers dropping in survey
+  // exports, interview tag tallies, Airtable/Notion CSVs, etc. We pass them
+  // through as plain text — Claude can interpret the columns from the header
+  // row, and the structuring prompt tells it how to build a framework on top.
+  "csv", "tsv",
 ] as const;
 
 export async function extractPdf(file: File): Promise<IngestedSource> {
@@ -188,6 +193,9 @@ export async function extractFile(file: File): Promise<IngestedSource> {
       return extractText(file);
     case "json":
       return extractJson(file);
+    case "csv":
+    case "tsv":
+      return extractText(file);
     case "css":
       return extractCss(file);
     case "html":

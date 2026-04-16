@@ -72,8 +72,15 @@ type CanvasContextValue = CanvasState & {
   setBoardSelection: (id: string, selection: UniversalSelection | null) => void;
   setActiveBoardId: (id: string | null) => void;
 
-  /** Kick off a describe call for an existing (pending-describe) board. */
-  startDescribe: (boardId: string, description: string, existingIds: string[]) => Promise<void>;
+  /** Kick off a describe call for an existing (pending-describe) board.
+   *  Optional sources are ingested server-side (URLs via Jina, files via the
+   *  shared extraction pipeline) and passed to the synthesis prompt. */
+  startDescribe: (
+    boardId: string,
+    description: string,
+    existingIds: string[],
+    sources?: { files?: File[]; urls?: string[] }
+  ) => Promise<void>;
   /** Kick off a generate stream for an existing (pending-generate) board. */
   startGenerate: (boardId: string, input: GenerateStreamInput) => Promise<void>;
   /** Abort the in-flight generation if any. */
@@ -226,18 +233,41 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
 
   // ── Streaming actions ───────────────────────────────────────────────────────
   const startDescribe = useCallback(
-    async (boardId: string, description: string, existingIds: string[]) => {
+    async (
+      boardId: string,
+      description: string,
+      existingIds: string[],
+      sources?: { files?: File[]; urls?: string[] }
+    ) => {
       if (!description.trim()) return;
       setPending({ boardId, kind: "describe", lastEvent: null, error: null });
       const ac = new AbortController();
       pendingAbortRef.current = ac;
       try {
-        const res = await fetch("/api/framework-describe", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ description: description.trim(), existingIds }),
-          signal: ac.signal,
-        });
+        const hasSources =
+          (sources?.files && sources.files.length > 0) ||
+          (sources?.urls && sources.urls.length > 0);
+
+        let res: Response;
+        if (hasSources) {
+          const fd = new FormData();
+          fd.append("description", description.trim());
+          fd.append("existingIds", JSON.stringify(existingIds));
+          (sources?.files ?? []).forEach((f, i) => fd.append(`file_${i}`, f));
+          (sources?.urls ?? []).forEach((u, i) => fd.append(`url_${i}`, u));
+          res = await fetch("/api/framework-describe", {
+            method: "POST",
+            body: fd,
+            signal: ac.signal,
+          });
+        } else {
+          res = await fetch("/api/framework-describe", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ description: description.trim(), existingIds }),
+            signal: ac.signal,
+          });
+        }
         const data = await res.json();
         if (!res.ok || !data?.ok) {
           throw new Error(data?.error ?? `Describe failed (HTTP ${res.status})`);
