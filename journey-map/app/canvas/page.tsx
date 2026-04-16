@@ -236,10 +236,15 @@ function CanvasPageInner() {
     );
   }
 
-  // Clicking blank canvas space deactivates the current board.
+  // Clicking blank canvas space deactivates the current board. Skip any
+  // click that lands inside a board, any floating chrome (copilot, topbar,
+  // zoom controls, library toggle), or an interactive form control —
+  // otherwise typing in the copilot would silently unselect the board.
   function onCanvasBackgroundClick(e: React.MouseEvent) {
     const target = e.target as HTMLElement;
     if (target.closest("[data-board-frame]")) return;
+    if (target.closest("[data-floating]")) return;
+    if (target.closest("input,textarea,button,a,select,[role='button']")) return;
     setActiveBoardId(null);
   }
 
