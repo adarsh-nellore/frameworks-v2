@@ -301,7 +301,11 @@ export function BoardFrame({
           data-board-map-root
           ref={boardRootRef}
           className={[
-            "inline-block rounded-[28px] bg-surface",
+            // Board interior paints with --canvas, not --surface, so cards
+            // (which stay on --surface) have a distinct fill and visually
+            // lift off the board. Design-system imports that set a distinct
+            // canvas color show up as the board wash without touching card fill.
+            "inline-block rounded-[28px] bg-canvas",
             "px-10 py-10 md:px-12 md:py-12",
             "shadow-panel ring-1 ring-border-soft/70",
           ].join(" ")}
