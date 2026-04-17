@@ -522,10 +522,12 @@ function GridLayout(p: LayoutProps) {
 
   return (
     <div className="flex flex-col">
-      {/* Header row: row-label gutter + col headers + add-col affordance */}
+      {/* Header row: row-label gutter + col headers + add-col affordance.
+          The spacer must be shrink-0 so it stays aligned with the row rail
+          below when the flex row overflows (row rails already carry shrink-0). */}
       <SortableContext items={colIds} strategy={horizontalListSortingStrategy}>
         <div className="flex items-center mb-3" style={{ gap: GUTTER }}>
-          <div style={{ width: LABEL_W }} />
+          <div className="shrink-0" style={{ width: LABEL_W }} />
           {map.cols.map((col, idx) => (
             <SortableHandle
               key={col.id}
@@ -927,7 +929,7 @@ function MatrixLayout(p: LayoutProps) {
           className="flex items-stretch mb-3"
           style={{ gap: GUTTER, paddingLeft: Y_AXIS_BAND_W }}
         >
-          <div style={{ width: LABEL_W }} />
+          <div className="shrink-0" style={{ width: LABEL_W }} />
           {map.cols.map((col, idx) => (
             <SortableHandle
               key={col.id}

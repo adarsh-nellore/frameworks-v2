@@ -38,8 +38,7 @@ function makeEl(): MockEl {
 }
 
 function installDom(boardEls: MockEl[], documentEl: MockEl): void {
-  // @ts-expect-error test shim
-  globalThis.document = {
+  const doc = {
     querySelector: (sel: string) => (sel === "[data-map-page]" ? boardEls[0] ?? null : null),
     querySelectorAll: (sel: string) =>
       sel === "[data-map-page]" ? boardEls.slice() : [],
@@ -48,8 +47,10 @@ function installDom(boardEls: MockEl[], documentEl: MockEl): void {
     getElementById: () => null,
     createElement: () => makeEl(),
   };
-  // @ts-expect-error test shim
-  globalThis.window = { dispatchEvent: () => true };
+  const win = { dispatchEvent: () => true };
+  // Broad cast — we only exercise the tiny surface the theme helpers use.
+  (globalThis as unknown as { document: unknown }).document = doc;
+  (globalThis as unknown as { window: unknown }).window = win;
 }
 
 function sampleDs() {
@@ -70,7 +71,7 @@ test("applyDesignSystem: only touches the provided target, never documentElement
   const board = makeEl();
   const docEl = makeEl();
   installDom([board], docEl);
-  const { applyDesignSystem } = await import("../lib/theme/apply.ts");
+  const { applyDesignSystem } = await import("../lib/theme/apply");
   applyDesignSystem(sampleDs() as Parameters<typeof applyDesignSystem>[0], board as unknown as HTMLElement);
   // Board got the vars.
   assert.equal(board.style.props["--accent"], "79 70 229");
@@ -84,7 +85,7 @@ test("applyDesignSystem: falls back to first [data-map-page] when no target give
   const b2 = makeEl();
   const docEl = makeEl();
   installDom([b1, b2], docEl);
-  const { applyDesignSystem } = await import("../lib/theme/apply.ts");
+  const { applyDesignSystem } = await import("../lib/theme/apply");
   applyDesignSystem(sampleDs() as Parameters<typeof applyDesignSystem>[0]);
   assert.equal(b1.style.props["--accent"], "79 70 229");
   // Second board not touched by the single-target call.
@@ -96,7 +97,7 @@ test("clearAppliedTheme: removes theme CSS vars from the target", async () => {
   const board = makeEl();
   const docEl = makeEl();
   installDom([board], docEl);
-  const { applyDesignSystem, clearAppliedTheme } = await import("../lib/theme/apply.ts");
+  const { applyDesignSystem, clearAppliedTheme } = await import("../lib/theme/apply");
   applyDesignSystem(sampleDs() as Parameters<typeof applyDesignSystem>[0], board as unknown as HTMLElement);
   assert.ok(board.style.props["--accent"]);
   clearAppliedTheme(board as unknown as HTMLElement);
@@ -109,7 +110,7 @@ test("applyDesignTokenCssVars: denied keys are never written", async () => {
   const board = makeEl();
   const docEl = makeEl();
   installDom([board], docEl);
-  const { applyDesignTokenCssVars } = await import("../lib/theme/apply.ts");
+  const { applyDesignTokenCssVars } = await import("../lib/theme/apply");
   applyDesignTokenCssVars(
     {
       // Deny-listed: should NOT land.
