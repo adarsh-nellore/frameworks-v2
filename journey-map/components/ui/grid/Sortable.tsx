@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
@@ -12,6 +12,8 @@ type Props = {
   payloadId: string;
   agentBusy: boolean;
   className?: string;
+  /** Extra inline styles merged onto the wrapper (e.g. minWidth). */
+  style?: CSSProperties;
   children: ReactNode;
 };
 
@@ -22,7 +24,15 @@ type Props = {
  * Activation distance is enforced by the DndContext's PointerSensor (6px),
  * so a quick click still selects without triggering a drag.
  */
-export function SortableHandle({ id, kind, payloadId, agentBusy, className, children }: Props) {
+export function SortableHandle({
+  id,
+  kind,
+  payloadId,
+  agentBusy,
+  className,
+  style: styleOverride,
+  children,
+}: Props) {
   const sortable = useSortable({
     id,
     data:
@@ -32,7 +42,8 @@ export function SortableHandle({ id, kind, payloadId, agentBusy, className, chil
     disabled: agentBusy,
   });
 
-  const style = {
+  const style: CSSProperties = {
+    ...styleOverride,
     transform: CSS.Translate.toString(sortable.transform),
     transition: sortable.transition,
     opacity: sortable.isDragging ? 0.4 : undefined,

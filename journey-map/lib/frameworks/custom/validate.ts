@@ -133,6 +133,10 @@ export function validateFrameworkConfig(raw: unknown, existingIds: Iterable<stri
   const chrome = parseChrome(src.chrome);
   if (chrome.error) return { ok: false, reason: chrome.error };
 
+  // ── connectors (optional) ──────────────────────────────────────────────────
+  const connectors = parseConnectors(src.connectors);
+  if (connectors.error) return { ok: false, reason: connectors.error };
+
   // ── seed ───────────────────────────────────────────────────────────────────
   const seedRes = validateSeed(src.seed, id, label);
   if (!seedRes.ok) return { ok: false, reason: `seed: ${seedRes.reason}` };
@@ -181,10 +185,38 @@ export function validateFrameworkConfig(raw: unknown, existingIds: Iterable<stri
       ...(chatPlaceholder ? { chatPlaceholder } : {}),
       ...(chatSubtitle ? { chatSubtitle } : {}),
       ...(chrome.value ? { chrome: chrome.value } : {}),
+      ...(connectors.value ? { connectors: connectors.value } : {}),
     };
 
     return { ok: true, config };
   }
+}
+
+function parseConnectors(raw: unknown): { error?: string; value?: FrameworkConfig["connectors"] } {
+  if (raw === undefined || raw === null) return {};
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    return { error: "connectors must be an object" };
+  }
+  const c = raw as Record<string, unknown>;
+  if (typeof c.enabled !== "boolean") {
+    return { error: "connectors.enabled must be a boolean" };
+  }
+  if (!c.enabled) return {}; // opt-out = omit entirely
+  const allowedKinds =
+    Array.isArray(c.allowedKinds) && c.allowedKinds.every((x) => typeof x === "string" && (x as string).trim())
+      ? (c.allowedKinds as string[]).map((x) => x.trim()).slice(0, 12)
+      : undefined;
+  const defaultRouting =
+    c.defaultRouting === "straight" || c.defaultRouting === "orthogonal"
+      ? c.defaultRouting
+      : undefined;
+  return {
+    value: {
+      enabled: true,
+      ...(allowedKinds && allowedKinds.length ? { allowedKinds } : {}),
+      ...(defaultRouting ? { defaultRouting } : {}),
+    },
+  };
 }
 
 function parseChrome(raw: unknown): { error?: string; value?: FrameworkConfig["chrome"] } {

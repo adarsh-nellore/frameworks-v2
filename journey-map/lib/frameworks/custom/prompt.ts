@@ -5,6 +5,7 @@ import {
   competitiveMapConfig,
   jtbdCanvasConfig,
   affinityDiagramConfig,
+  processMapConfig,
 } from "../universal";
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -63,6 +64,7 @@ function serializeFewShot(cfg: FrameworkConfig): unknown {
     ...(cfg.heroMetaFields ? { heroMetaFields: cfg.heroMetaFields } : {}),
     ...(cfg.chatPlaceholder ? { chatPlaceholder: cfg.chatPlaceholder } : {}),
     ...(cfg.chatSubtitle ? { chatSubtitle: cfg.chatSubtitle } : {}),
+    ...(cfg.connectors ? { connectors: cfg.connectors } : {}),
     structuringPrompt: stripOpMentions(cfg.structuringPrompt),
     exampleInstructions: cfg.exampleInstructions.slice(0, 3),
     seed: {
@@ -201,7 +203,8 @@ const STAKEHOLDER_MAP_SHOT: unknown = {
   },
 };
 
-// Assembled list: 5 live configs (span every layout + constraint combo) + 3 synthetics.
+// Assembled list: 6 live configs (span every layout + constraint combo, plus
+// process-map which demonstrates connectors: enabled) + 3 synthetics.
 function fewShots(): unknown[] {
   return [
     serializeFewShot(journeyMapConfig),       // grid, both axes dynamic
@@ -209,6 +212,7 @@ function fewShots(): unknown[] {
     serializeFewShot(competitiveMapConfig),   // matrix, dynamic (rare but valid)
     serializeFewShot(jtbdCanvasConfig),       // kanban, 1 row, dynamic cols
     serializeFewShot(affinityDiagramConfig),  // kanban with explicit row groupings
+    serializeFewShot(processMapConfig),       // grid + connectors: enabled (flow/process)
     SWOT_SHOT,
     CARD_SORT_SHOT,
     STAKEHOLDER_MAP_SHOT,
@@ -306,8 +310,28 @@ If the user describes something unfamiliar, reason from first principles:
 - Conversion funnel → kanban with \`chrome: { kind: "funnel" }\`. Cols = funnel stages top-to-bottom.
 - Concentric rings (onion) → kanban with \`chrome: { kind: "concentric" }\`. Cols = rings inner-to-outer.
 - Mind map / brainstorm → freeform. No chrome; cards cluster by col tag.
-- Flowchart / timeline → grid with stages as cols, decision points as cards.
+- Flowchart / process map / workflow / service blueprint → grid with phases as cols, swimlanes as rows. **MUST set \`connectors: { enabled: true, defaultRouting: "orthogonal" }\`** so the populate step draws arrows between steps. See the process-map example.
 - Radar chart → kanban with one col per dimension, scores as cardMetaFields.
+
+## Connectors — when to enable
+
+Include the top-level \`connectors\` field ONLY when the framework's meaning depends on arrows or relationships between cards. Concretely:
+
+**You MUST enable connectors (\`connectors: { enabled: true, defaultRouting: "orthogonal" }\`)** if the user's description contains ANY of these signals:
+
+- The words "process", "process map", "flow", "flowchart", "workflow", "pipeline", "service blueprint", "handoff", "sequence", "procedure", "runbook", "playbook", "state machine", "state diagram", "decision tree", "causal", "dependency", "dependency graph", "BPMN", "approval flow", "escalation", "intake flow", "ticket flow", "request flow", "onboarding flow", "fulfillment flow", "claims flow", "deployment pipeline", "CI/CD", "incident response flow".
+- Language implying directed progression: "step X happens, then step Y", "work moves from A to B", "this step triggers that step", "when approved, we do X; when denied, we do Y", "once this is done, route to…".
+- Swimlane structure where multiple actors/systems hand work between each other over phases.
+
+If ANY of those match, connectors MUST be enabled. If in doubt, lean toward enabling — it's better to have arrows a user can delete than miss them entirely.
+
+**Do NOT enable for**: SWOT, BCG, 2×2s, empathy maps, JTBD canvas, affinity diagrams, journey maps (journey maps show experience, not directed flow), stakeholder maps, card sorts, Venn, funnels, Kano, RACI, OKRs — these are tabular or spatial, not directed graphs.
+
+Connector kinds you can reference in \`allowedKinds\`: \`"sequence"\` (normal step-to-step flow), \`"handoff"\` (work crosses a swimlane), \`"decision-yes"\` / \`"decision-no"\` (branches out of a decision card), \`"dependency"\`, \`"feedback-loop"\`. Choose whichever subset fits the framework's vocabulary.
+
+When connectors are enabled, you MUST also add a \`stepKind\` cardMetaField with options \`["task", "decision", "start", "end"]\` and \`nullable: true\` so cards can self-describe their node type. The populate step relies on this to know which cards are decisions, starts, ends. (See the process-map example — copy that pattern.)
+
+**ID hygiene for connector-enabled frameworks.** The populate step will create cards AND connectors in the same batch. It MUST assign a slug \`id\` to every card that will be a connector endpoint (nearly all of them). Slug format: \`^[a-z][a-z0-9_-]{0,40}$\` — examples: \`intake_submitted\`, \`decision_approval\`, \`handoff_billing\`, \`end_archived\`. Do NOT use the \`k\\d+\` format — it is reserved for auto-assignment. This note is carried into the populate step via the universal prompt.
 
 ## Examples of valid output (shape reference)
 

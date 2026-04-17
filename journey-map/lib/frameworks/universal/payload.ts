@@ -86,6 +86,19 @@ export function renderMapDSL(map: UniversalMap): string {
     }
   }
 
+  // Connectors — only rendered when the map actually has them. Empty/absent
+  // connectors are elided to keep the DSL compact for frameworks that don't
+  // use the feature.
+  if (map.connectors && map.connectors.length > 0) {
+    lines.push("");
+    lines.push("connectors (sourceCardId → targetCardId  kind  [label]):");
+    for (const e of map.connectors) {
+      const kind = e.kind ? `  ${e.kind}` : "";
+      const label = e.label ? `  "${e.label}"` : "";
+      lines.push(`  ${e.id}:  ${e.sourceCardId} → ${e.targetCardId}${kind}${label}`);
+    }
+  }
+
   return lines.join("\n");
 }
 
@@ -140,6 +153,12 @@ export function parseFocus(
   if (o.type === "row") {
     if (typeof o.id !== "string") return { ok: false, reason: "focus.id must be string" };
     return { ok: true, focus: { type: "row", id: o.id } };
+  }
+  if (o.type === "connector") {
+    if (!Array.isArray(o.ids) || !o.ids.every((x) => typeof x === "string")) {
+      return { ok: false, reason: "focus.ids must be string[]" };
+    }
+    return { ok: true, focus: { type: "connector", ids: o.ids as string[] } };
   }
   return { ok: false, reason: `Unknown focus.type: ${o.type}` };
 }

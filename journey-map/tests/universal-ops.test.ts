@@ -569,3 +569,85 @@ test("payload DSL: renders sub-items indented under their parent", () => {
   assert.match(dsl, /└ k2/);
   assert.match(dsl, /└ k3/);
 });
+
+// ────────────────────────────────────────────────────────────────────────────
+// ADD CARD WITH AGENT-SPECIFIED ID (slug ids for batch referencing)
+// ────────────────────────────────────────────────────────────────────────────
+
+test("addCard: accepts a valid slug id and uses it as-is", () => {
+  const r = applyOps(blank(), [
+    { op: "addCol", label: "A" },
+    { op: "addRow", label: "R" },
+    { op: "addCard", colId: "c1", rowId: "r1", text: "start step", id: "start_node" },
+  ]);
+  assert.equal(r.ok, true);
+  if (!r.ok) return;
+  assert.equal(r.map.cards.length, 1);
+  assert.equal(r.map.cards[0].id, "start_node");
+});
+
+test("addCard: rejects id that uses the reserved k\\d+ format", () => {
+  const r = applyOps(blank(), [
+    { op: "addCol", label: "A" },
+    { op: "addRow", label: "R" },
+    { op: "addCard", colId: "c1", rowId: "r1", text: "x", id: "k5" },
+  ]);
+  assert.equal(r.ok, false);
+  if (r.ok) return;
+  assert.match(r.reason, /reserved k/i);
+});
+
+test("addCard: rejects id that collides with an existing card", () => {
+  const r = applyOps(blank(), [
+    { op: "addCol", label: "A" },
+    { op: "addRow", label: "R" },
+    { op: "addCard", colId: "c1", rowId: "r1", text: "first", id: "step_one" },
+    { op: "addCard", colId: "c1", rowId: "r1", text: "second", id: "step_one" },
+  ]);
+  assert.equal(r.ok, false);
+  if (r.ok) return;
+  assert.match(r.reason, /already exists/);
+});
+
+test("addCard: rejects id that doesn't match the slug pattern", () => {
+  const r = applyOps(blank(), [
+    { op: "addCol", label: "A" },
+    { op: "addRow", label: "R" },
+    { op: "addCard", colId: "c1", rowId: "r1", text: "x", id: "Bad Id!" },
+  ]);
+  assert.equal(r.ok, false);
+  if (r.ok) return;
+  assert.match(r.reason, /slug/i);
+});
+
+test("batch: addCard with slug id + addConnector referencing that slug applies atomically", () => {
+  const r = applyOps(blank(), [
+    { op: "addCol", label: "Phase" },
+    { op: "addRow", label: "Lane" },
+    { op: "addCard", colId: "c1", rowId: "r1", text: "start", id: "start" },
+    { op: "addCard", colId: "c1", rowId: "r1", text: "end", id: "end_node" },
+    { op: "addConnector", sourceCardId: "start", targetCardId: "end_node", kind: "sequence" },
+  ]);
+  assert.equal(r.ok, true);
+  if (!r.ok) return;
+  assert.equal(r.map.cards.length, 2);
+  assert.equal(r.map.connectors?.length, 1);
+  assert.equal(r.map.connectors?.[0].sourceCardId, "start");
+  assert.equal(r.map.connectors?.[0].targetCardId, "end_node");
+});
+
+test("addCard: mixing slug-id and auto-assigned ids in one batch — auto counter is unaffected", () => {
+  const r = applyOps(blank(), [
+    { op: "addCol", label: "A" },
+    { op: "addRow", label: "R" },
+    { op: "addCard", colId: "c1", rowId: "r1", text: "manual", id: "first_manual" },
+    { op: "addCard", colId: "c1", rowId: "r1", text: "auto 1" },
+    { op: "addCard", colId: "c1", rowId: "r1", text: "auto 2" },
+  ]);
+  assert.equal(r.ok, true);
+  if (!r.ok) return;
+  // First card has the slug id; the auto-assign counter still produces k1, k2.
+  assert.equal(r.map.cards[0].id, "first_manual");
+  assert.equal(r.map.cards[1].id, "k1");
+  assert.equal(r.map.cards[2].id, "k2");
+});

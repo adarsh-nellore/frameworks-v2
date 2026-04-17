@@ -38,13 +38,19 @@ export function XAxisBand({
   label,
   agentBusy,
   onChange,
+  leftOffset,
 }: {
   label: string;
   agentBusy: boolean;
   onChange: (label: string) => void;
+  /** Pixels of left inset so the band aligns with the first column of the grid. */
+  leftOffset?: number;
 }) {
   return (
-    <div className="flex items-center gap-2 mb-2 ml-[200px] pr-2">
+    <div
+      className="flex items-center gap-2 mb-2 pr-2"
+      style={{ marginLeft: leftOffset ?? 200 }}
+    >
       <EditableAxisLabel
         value={label}
         agentBusy={agentBusy}
@@ -61,14 +67,20 @@ export function YAxisBand({
   label,
   agentBusy,
   onChange,
+  width = 32,
 }: {
   label: string;
   agentBusy: boolean;
   onChange: (label: string) => void;
+  /** Width of the band in pixels (should match the grid's left padding). */
+  width?: number;
 }) {
   // Vertical band positioned to the left of the matrix grid.
   return (
-    <div className="absolute left-0 top-0 bottom-0 w-8 flex flex-col items-center justify-between py-3 pointer-events-none">
+    <div
+      className="absolute left-0 top-0 bottom-0 flex flex-col items-center justify-between py-3 pointer-events-none"
+      style={{ width }}
+    >
       <ArrowUp className="h-3 w-3 text-ink-muted shrink-0" />
       <div className="pointer-events-auto flex items-center gap-2 -rotate-90 origin-center whitespace-nowrap">
         <EditableAxisLabel

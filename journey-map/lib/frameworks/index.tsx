@@ -14,6 +14,7 @@ import {
   journeyMapConfig,
   jtbdCanvasConfig,
   matrix2x2Config,
+  processMapConfig,
   type FrameworkConfig,
 } from "./universal";
 
@@ -70,6 +71,7 @@ const registry: Record<string, AnyFrameworkModule> = {
   [jtbdCanvasConfig.id]: makeModule(jtbdCanvasConfig),
   [competitiveMapConfig.id]: makeModule(competitiveMapConfig),
   [affinityDiagramConfig.id]: makeModule(affinityDiagramConfig),
+  [processMapConfig.id]: makeModule(processMapConfig),
   // Catalog configs (~20) from configs/catalog.ts — BCG, SWOT, Eisenhower,
   // Empathy Map, Stakeholder, Risk, Ansoff, Assumption, Wardley, Business
   // Model Canvas, Lean Canvas, Value Prop Canvas, Service Blueprint, User

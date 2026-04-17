@@ -56,6 +56,36 @@ export type UniversalMap = {
   cols: Col[];
   rows: Row[];
   cards: Card[];
+  /**
+   * Optional relationships between cards (arrows, dependencies, sequence links).
+   * Opt-in per framework via FrameworkConfig.connectors.enabled. Old maps
+   * missing this field behave as if connectors === [].
+   */
+  connectors?: Connector[];
+};
+
+// ---------------------------------------------------------------------------
+// Connectors — optional card-to-card relationships rendered as SVG paths
+// above the card layer. Anchors to card IDs (not coordinates) so they survive
+// card reorder, layout switches, zoom, and freeform drag.
+// ---------------------------------------------------------------------------
+
+export type ConnectorAnchor = "top" | "right" | "bottom" | "left";
+export type ConnectorRouting = "straight" | "orthogonal";
+
+export type Connector = {
+  id: string;
+  sourceCardId: string;
+  targetCardId: string;
+  /** Framework-specific semantic kind (e.g. "sequence", "handoff", "decision-yes", "decision-no") */
+  kind?: string;
+  /** Optional free-text label. v1: not editable in UI; seed/AI can set it. */
+  label?: string;
+  /** Override framework default routing. */
+  routing?: ConnectorRouting;
+  /** Stable anchor side on each end. Auto-picked if absent. */
+  sourceAnchor?: ConnectorAnchor;
+  targetAnchor?: ConnectorAnchor;
 };
 
 // ---------------------------------------------------------------------------
@@ -65,7 +95,8 @@ export type UniversalMap = {
 export type UniversalSelection =
   | { type: "cards"; ids: string[] }
   | { type: "col"; id: string }
-  | { type: "row"; id: string };
+  | { type: "row"; id: string }
+  | { type: "connector"; ids: string[] };
 
 // ---------------------------------------------------------------------------
 // Helpers

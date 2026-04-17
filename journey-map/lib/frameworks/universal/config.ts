@@ -1,4 +1,4 @@
-import type { UniversalMap } from "./types";
+import type { UniversalMap, ConnectorRouting } from "./types";
 
 // ---------------------------------------------------------------------------
 // FrameworkConfig — replaces per-framework types/schema/prompt files.
@@ -61,6 +61,21 @@ export type FrameworkConfig = {
   colNoun: string;   // "Stage" | "Section" | "Competitor" | "Theme"
   rowNoun: string;   // "Lane" | "Criterion" | "Card Type"
   cardNoun: string;  // "Card" | "Item" | "Assessment"
+
+  // ── Connectors (optional relationships between cards) ───────────────────────
+  /**
+   * Opt-in per framework. When enabled, the renderer shows 4 edge handles on
+   * card hover and an SVG overlay draws arrows between connected cards. The
+   * universal ops (addConnector, removeConnector, updateConnector) and AI tool
+   * schema only expose connector affordances when this is set.
+   */
+  connectors?: {
+    enabled: boolean;
+    /** Allowed semantic kinds for connectors (e.g. "sequence", "handoff"). */
+    allowedKinds?: string[];
+    /** Default routing when a connector omits routing. Defaults to "orthogonal". */
+    defaultRouting?: ConnectorRouting;
+  };
 
   // ── Structure constraints ───────────────────────────────────────────────────
   /** If true, addCol/removeCol ops are forbidden (e.g. 2x2 fixed quadrants) */

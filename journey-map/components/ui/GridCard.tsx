@@ -22,8 +22,9 @@ function hasKindIcon(kind: string | undefined): boolean {
   if (!kind) return false;
   return KNOWN_KINDS.has(kind.toLowerCase());
 }
-import type { Card, CardMeta } from "@/lib/frameworks/universal/types";
+import type { Card, CardMeta, ConnectorAnchor } from "@/lib/frameworks/universal/types";
 import type { CardMetaField } from "@/lib/frameworks/universal/config";
+import { useConnectorUI } from "./grid/connector-ui-context";
 
 type Props = {
   card: Card;
@@ -94,6 +95,7 @@ export function GridCard({
     data: { kind: "card", cardId: card.id, fromColId: card.colId, fromRowId: card.rowId },
     disabled: agentBusy || !draggable,
   });
+  const connectorUI = useConnectorUI();
   const drop = useDroppable({
     id: `card:${card.id}`,
     data: { kind: "card", cardId: card.id, colId: card.colId, rowId: card.rowId },
@@ -386,6 +388,17 @@ export function GridCard({
               </button>
             ) : null}
 
+            {/* Connector edge handles — 4 dots on hover/select. Pointerdown
+                 starts a drag-to-connect gesture via ConnectorUIContext. */}
+            {connectorUI?.enabled && !agentBusy && !editing && !isGhost && (
+              <ConnectorHandles
+                isSelected={isSelected}
+                onDragStart={(anchor, e) =>
+                  connectorUI.onDragStart(card.id, anchor, e)
+                }
+              />
+            )}
+
             {/* Inline remove — always visible when the card is selected so
                  users don't have to discover it via hover. On unselected
                  cards, we still reveal it on hover so the card face stays
@@ -412,6 +425,72 @@ export function GridCard({
         )}
       </div>
     </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// ConnectorHandles — 4 edge dots rendered on hover/select when the framework
+// has connectors enabled. Pointerdown on a handle starts a drag-to-connect.
+// Handles sit just outside the card edge so they read as anchor points rather
+// than card UI chrome.
+// ──────────────────────────────────────────────────────────────────────────────
+
+function ConnectorHandles({
+  isSelected,
+  onDragStart,
+}: {
+  isSelected: boolean;
+  onDragStart: (anchor: ConnectorAnchor, e: React.PointerEvent) => void;
+}) {
+  const common =
+    "absolute w-3 h-3 rounded-full bg-white border border-accent shadow-sm " +
+    "transition-opacity cursor-crosshair hover:scale-125 hover:bg-accent/20";
+  const visibility = isSelected
+    ? "opacity-100"
+    : "opacity-0 group-hover:opacity-100";
+  const stop = (e: React.PointerEvent) => {
+    // dnd-kit's card drag would otherwise swallow this pointer.
+    e.stopPropagation();
+  };
+  return (
+    <>
+      <button
+        type="button"
+        aria-label="Connect from top"
+        onPointerDownCapture={(e) => {
+          stop(e);
+          onDragStart("top", e);
+        }}
+        className={`${common} ${visibility} -top-1.5 left-1/2 -translate-x-1/2`}
+      />
+      <button
+        type="button"
+        aria-label="Connect from right"
+        onPointerDownCapture={(e) => {
+          stop(e);
+          onDragStart("right", e);
+        }}
+        className={`${common} ${visibility} -right-1.5 top-1/2 -translate-y-1/2`}
+      />
+      <button
+        type="button"
+        aria-label="Connect from bottom"
+        onPointerDownCapture={(e) => {
+          stop(e);
+          onDragStart("bottom", e);
+        }}
+        className={`${common} ${visibility} -bottom-1.5 left-1/2 -translate-x-1/2`}
+      />
+      <button
+        type="button"
+        aria-label="Connect from left"
+        onPointerDownCapture={(e) => {
+          stop(e);
+          onDragStart("left", e);
+        }}
+        className={`${common} ${visibility} -left-1.5 top-1/2 -translate-y-1/2`}
+      />
+    </>
   );
 }
 

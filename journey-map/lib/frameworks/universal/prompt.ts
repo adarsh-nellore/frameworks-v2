@@ -13,7 +13,13 @@ Every map is a grid: **cols × rows → cards**.
 - **Rows** are the vertical axis (top→bottom). In a journey map they're swim lanes; in JTBD they're typically a single row; in competitive maps they're evaluation criteria.
 - **Cards** are the atomic content units placed at a (col, row) position. Multiple cards can stack at the same position. Each card has text and optional metadata (priority, cardType, etc.).
 
-**IDs**: Cols use \`c1, c2, …\`; rows use \`r1, r2, …\`; cards use \`k1, k2, …\`. Always reference existing IDs exactly. New IDs are assigned automatically — never invent them.
+**IDs**
+
+- **Existing ids**: cols are \`c1, c2, …\`, rows are \`r1, r2, …\`, cards are auto-assigned \`k1, k2, …\` when created without a name. Reference existing ids exactly — do not invent replacements for ids that are already present in the map.
+- **New cards you will reference later in THIS batch**: supply a slug \`id\` on the \`addCard\` op so you can point to it from subsequent ops in the same batch (as \`sourceCardId\` / \`targetCardId\` on \`addConnector\`, or as \`parentCardId\` on a later \`addCard\`). Slugs must match \`^[a-z][a-z0-9_-]{0,40}$\` — examples: \`start\`, \`intake_request\`, \`decision_eligibility\`, \`end_archive\`, \`review_denial\`.
+- **Never use the \`k\\d+\` format for ids you specify yourself.** That format is reserved for the server's auto-assigner; using it will reject the op.
+- **Never reuse an existing card id** (auto-assigned or slug) when adding a new card.
+- If a new card is just a leaf and nothing in this batch will reference it, omit \`id\` and let the server assign \`k${"{n}"}\`.
 
 ## The Map Payload Format
 
@@ -42,12 +48,13 @@ cards (col·row = cardId  [meta]):
 
 ## Operations
 
-Apply changes using these 15 ops:
+Apply changes using these ops:
 
 **Col ops:** addCol · removeCol · renameCol · moveCol
 **Row ops:** addRow · removeRow · renameRow · moveRow
 **Card ops:** addCard · editCard · removeCard · moveCard · reparentCard
 **Meta ops:** setCardMeta · setMapMeta
+**Connector ops (opt-in):** addConnector · removeConnector · updateConnector
 
 Rules:
 - \`removeCol\` cascades — deletes all cards (including sub-items) in that col
@@ -55,6 +62,7 @@ Rules:
 - \`moveCard\` takes \`toColId\`, \`toRowId\`, and optional \`toOrder\` (0-based position within the target cell). Moving a parent card cascades its sub-items.
 - \`setCardMeta\` with \`value: null\` removes the key
 - Ops are applied left-to-right atomically. Use a newly added col's/row's id in subsequent ops in the same batch.
+- Connector ops are ONLY to be used when the framework-specific instructions below explicitly describe connectors (e.g. the Process Map framework). Do not emit \`addConnector\` for frameworks that don't mention them — the UI won't render them and the ops will be silently discarded. When a card referenced by a connector is removed, the connector is pruned automatically.
 
 ## Sub-items (one level of nesting)
 

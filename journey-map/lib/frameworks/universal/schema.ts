@@ -118,6 +118,12 @@ export const toolSchema = {
               // Optional: make this card a sub-item of the given parent (same col/row).
               // One level only — parent must itself be top-level.
               parentCardId: { type: "string" },
+              // Optional slug id. Supply when you need to reference this card in
+              // LATER ops in the same batch — e.g. as a source/target on
+              // addConnector, or as a parentCardId on a subsequent addCard.
+              // MUST match ^[a-z][a-z0-9_-]{0,40}$ and MUST NOT use the reserved
+              // ^k\d+$ format (that pattern is for auto-assigned ids).
+              id: { type: "string", pattern: "^[a-z][a-z0-9_-]{0,40}$" },
             },
           },
           {
@@ -183,6 +189,54 @@ export const toolSchema = {
               op: { type: "string", enum: ["setMapMeta"] },
               key: { type: "string" },
               value: { type: "string" },
+            },
+          },
+          // ── Connector ops ─────────────────────────────────────────────────
+          // Only emit these when the active framework opts in (connectors.enabled === true).
+          {
+            type: "object",
+            required: ["op", "sourceCardId", "targetCardId"],
+            additionalProperties: false,
+            properties: {
+              op: { type: "string", enum: ["addConnector"] },
+              sourceCardId: { type: "string" },
+              targetCardId: { type: "string" },
+              kind: { type: "string" },
+              label: { type: "string" },
+              routing: { type: "string", enum: ["straight", "orthogonal"] },
+              sourceAnchor: { type: "string", enum: ["top", "right", "bottom", "left"] },
+              targetAnchor: { type: "string", enum: ["top", "right", "bottom", "left"] },
+            },
+          },
+          {
+            type: "object",
+            required: ["op", "connectorId"],
+            additionalProperties: false,
+            properties: {
+              op: { type: "string", enum: ["removeConnector"] },
+              connectorId: { type: "string" },
+            },
+          },
+          {
+            type: "object",
+            required: ["op", "connectorId", "patch"],
+            additionalProperties: false,
+            properties: {
+              op: { type: "string", enum: ["updateConnector"] },
+              connectorId: { type: "string" },
+              patch: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                  sourceCardId: { type: "string" },
+                  targetCardId: { type: "string" },
+                  kind: { type: "string" },
+                  label: { type: "string" },
+                  routing: { type: "string", enum: ["straight", "orthogonal"] },
+                  sourceAnchor: { type: "string", enum: ["top", "right", "bottom", "left"] },
+                  targetAnchor: { type: "string", enum: ["top", "right", "bottom", "left"] },
+                },
+              },
             },
           },
         ],

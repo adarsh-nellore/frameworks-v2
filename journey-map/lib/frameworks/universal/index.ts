@@ -1,4 +1,14 @@
-export type { UniversalMap, Col, Row, Card, CardMeta, UniversalSelection } from "./types";
+export type {
+  UniversalMap,
+  Col,
+  Row,
+  Card,
+  CardMeta,
+  UniversalSelection,
+  Connector,
+  ConnectorAnchor,
+  ConnectorRouting,
+} from "./types";
 export { cardsAt, cardsInCol, cardsInRow, nextCardOrder } from "./types";
 export type { Op } from "./ops";
 export { applyOps, validateOpShape, validateMap } from "./ops";
@@ -11,4 +21,5 @@ export { jtbdCanvasConfig } from "./configs/jtbd-canvas";
 export { matrix2x2Config } from "./configs/matrix-2x2";
 export { competitiveMapConfig } from "./configs/competitive-map";
 export { affinityDiagramConfig } from "./configs/affinity-diagram";
+export { processMapConfig } from "./configs/process-map";
 export { catalogConfigs } from "./configs/catalog";

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   DndContext,
   type DragEndEvent,
@@ -35,6 +35,20 @@ import { SortableHandle } from "./grid/Sortable";
 import { SelectionToolbar } from "./grid/SelectionToolbar";
 import { FreeformLayout } from "./grid/FreeformLayout";
 import { ChromeLayer } from "./grid/ChromeLayer";
+import { ConnectorLayer, type ConnectorDraft } from "./grid/ConnectorLayer";
+import { ConnectorUIContext, type ConnectorUI } from "./grid/connector-ui-context";
+import type { ConnectorAnchor } from "@/lib/frameworks/universal/types";
+import {
+  CARD_W,
+  GUTTER,
+  KANBAN_COL_W,
+  LABEL_W,
+  MATRIX_CELL_MIN_W,
+  MATRIX_CONTENT_LEFT_OFFSET,
+  MATRIX_ROW_MIN_H,
+  ROW_MIN_H,
+  Y_AXIS_BAND_W,
+} from "./grid/layout-tokens";
 
 type Props = {
   map: UniversalMap;
@@ -44,12 +58,6 @@ type Props = {
   selection: unknown;
   onSelectionChange: (next: unknown) => void;
 };
-
-const CARD_W = 280;
-const LABEL_W = 200;
-const GUTTER = 16;
-const ROW_MIN_H = 196;
-const KANBAN_COL_W = 296;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Top-level dispatcher — composes HeroBanner + one of three layouts
@@ -77,6 +85,13 @@ export function FrameworkGrid({
     | null
   >(null);
 
+  // Container ref for ConnectorLayer + in-flight connector draft. The draft is
+  // captured while the user is dragging from an edge handle; pointerup commits
+  // an addConnector op or cancels if the pointer isn't over a target card.
+  const cardsContainerRef = useRef<HTMLDivElement | null>(null);
+  const [connectorDraft, setConnectorDraft] = useState<ConnectorDraft | null>(null);
+  const connectorsEnabled = !!config.connectors?.enabled;
+
   function commitOps(ops: Op[]) {
     const result = applyOps(map, ops);
     if (result.ok) onChange(result.map);
@@ -86,6 +101,7 @@ export function FrameworkGrid({
   const selectedCardIds = new Set(sel?.type === "cards" ? sel.ids : []);
   const selectedColId = sel?.type === "col" ? sel.id : null;
   const selectedRowId = sel?.type === "row" ? sel.id : null;
+  const selectedConnectorIds = new Set(sel?.type === "connector" ? sel.ids : []);
 
   function selectCard(cardId: string, additive: boolean) {
     if (additive && sel?.type === "cards") {
@@ -113,6 +129,21 @@ export function FrameworkGrid({
     const ops: Op[] = sel.ids.map((id) => ({ op: "removeCard" as const, cardId: id }));
     commitOps(ops);
     onSelectionChange(null);
+  }
+  function deleteSelectedConnectors() {
+    if (sel?.type !== "connector" || sel.ids.length === 0) return;
+    const ops: Op[] = sel.ids.map((id) => ({ op: "removeConnector" as const, connectorId: id }));
+    commitOps(ops);
+    onSelectionChange(null);
+  }
+  function selectConnector(id: string, additive: boolean) {
+    if (additive && sel?.type === "connector") {
+      const has = sel.ids.includes(id);
+      const next = has ? sel.ids.filter((x) => x !== id) : [...sel.ids, id];
+      onSelectionChange(next.length ? { type: "connector", ids: next } : null);
+    } else {
+      onSelectionChange({ type: "connector", ids: [id] });
+    }
   }
   function clearSelection() {
     onSelectionChange(null);
@@ -270,6 +301,77 @@ export function FrameworkGrid({
     if (sel) onSelectionChange(null);
   }
 
+  // Connector drag-to-connect. An edge handle on a card dispatches
+  // `beginConnectorDrag`; we attach window-level listeners so the drag keeps
+  // tracking even if the pointer leaves the source card.
+  const beginConnectorDrag = useCallback(
+    (cardId: string, anchor: ConnectorAnchor, e: React.PointerEvent) => {
+      if (agentBusy || !connectorsEnabled) return;
+      const container = cardsContainerRef.current;
+      if (!container) return;
+      e.preventDefault();
+      e.stopPropagation();
+
+      const pointerToLocal = (cx: number, cy: number) => {
+        const rect = container.getBoundingClientRect();
+        return {
+          x: cx - rect.left + container.scrollLeft,
+          y: cy - rect.top + container.scrollTop,
+        };
+      };
+
+      const initial = pointerToLocal(e.clientX, e.clientY);
+      setConnectorDraft({ fromCardId: cardId, fromAnchor: anchor, toX: initial.x, toY: initial.y });
+
+      const onMove = (ev: PointerEvent) => {
+        const p = pointerToLocal(ev.clientX, ev.clientY);
+        setConnectorDraft((prev) =>
+          prev ? { ...prev, toX: p.x, toY: p.y } : prev
+        );
+      };
+      const onUp = (ev: PointerEvent) => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        window.removeEventListener("pointercancel", onCancel);
+        setConnectorDraft(null);
+
+        // Resolve the target: the topmost element under the pointer carrying a
+        // data-card-id. We query through the overlay (pointer-events:none) so
+        // the hit test reaches the card underneath.
+        const stack = document.elementsFromPoint(ev.clientX, ev.clientY);
+        let targetId: string | null = null;
+        for (const node of stack) {
+          if (!(node instanceof HTMLElement)) continue;
+          const found = node.closest<HTMLElement>("[data-card-id]");
+          if (found) {
+            targetId = found.getAttribute("data-card-id");
+            break;
+          }
+        }
+        if (!targetId || targetId === cardId) return;
+        commitOps([
+          { op: "addConnector", sourceCardId: cardId, targetCardId: targetId, sourceAnchor: anchor },
+        ]);
+      };
+      const onCancel = () => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        window.removeEventListener("pointercancel", onCancel);
+        setConnectorDraft(null);
+      };
+
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+      window.addEventListener("pointercancel", onCancel);
+    },
+    [agentBusy, connectorsEnabled, commitOps]
+  );
+
+  const connectorUIValue = useMemo<ConnectorUI | null>(
+    () => (connectorsEnabled ? { enabled: true, onDragStart: beginConnectorDrag } : null),
+    [connectorsEnabled, beginConnectorDrag]
+  );
+
   const shared = {
     map,
     config,
@@ -309,9 +411,14 @@ export function FrameworkGrid({
     function onKey(e: KeyboardEvent) {
       if (isTypingTarget(e.target)) return;
       if (agentBusy) return;
-      if ((e.key === "Delete" || e.key === "Backspace") && selectedCount > 0) {
-        e.preventDefault();
-        deleteSelectedCards();
+      if ((e.key === "Delete" || e.key === "Backspace")) {
+        if (selectedCount > 0) {
+          e.preventDefault();
+          deleteSelectedCards();
+        } else if (sel?.type === "connector" && sel.ids.length > 0) {
+          e.preventDefault();
+          deleteSelectedConnectors();
+        }
       } else if (e.key === "Escape" && sel) {
         e.preventDefault();
         clearSelection();
@@ -322,37 +429,53 @@ export function FrameworkGrid({
   }, [selectedCount, sel, agentBusy]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
-      <div className="flex flex-col" onClick={handleCanvasClick}>
-        <HeroBanner map={map} config={config} agentBusy={agentBusy} commitOps={commitOps} />
+    <ConnectorUIContext.Provider value={connectorUIValue}>
+      <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+        <div className="flex flex-col" onClick={handleCanvasClick}>
+          <HeroBanner map={map} config={config} agentBusy={agentBusy} commitOps={commitOps} />
 
-        {config.layout === "grid" && <GridLayout {...shared} />}
-        {config.layout === "kanban" && <KanbanLayout {...shared} />}
-        {config.layout === "matrix" && <MatrixLayout {...shared} />}
-        {config.layout === "freeform" && (
-          <FreeformLayout
-            map={map}
-            config={config}
+          <div ref={cardsContainerRef} className="relative">
+            {config.layout === "grid" && <GridLayout {...shared} />}
+            {config.layout === "kanban" && <KanbanLayout {...shared} />}
+            {config.layout === "matrix" && <MatrixLayout {...shared} />}
+            {config.layout === "freeform" && (
+              <FreeformLayout
+                map={map}
+                config={config}
+                agentBusy={agentBusy}
+                selectedCardIds={selectedCardIds}
+                onCardSelect={selectCard}
+                onEditCard={editCard}
+                onRemoveCard={removeCard}
+                commitOps={commitOps}
+              />
+            )}
+
+            {connectorsEnabled && (
+              <ConnectorLayer
+                connectors={map.connectors ?? []}
+                containerRef={cardsContainerRef}
+                recomputeKey={map.cards}
+                defaultRouting={config.connectors?.defaultRouting ?? "orthogonal"}
+                selectedConnectorIds={selectedConnectorIds}
+                onConnectorClick={selectConnector}
+                draft={connectorDraft}
+              />
+            )}
+          </div>
+        </div>
+
+        {/* Floating action bar for batch ops on multi-card selection */}
+        {selectedCount > 0 ? (
+          <SelectionToolbar
+            count={selectedCount}
             agentBusy={agentBusy}
-            selectedCardIds={selectedCardIds}
-            onCardSelect={selectCard}
-            onEditCard={editCard}
-            onRemoveCard={removeCard}
-            commitOps={commitOps}
+            onDelete={deleteSelectedCards}
+            onClear={clearSelection}
           />
-        )}
-      </div>
-
-      {/* Floating action bar for batch ops on multi-card selection */}
-      {selectedCount > 0 ? (
-        <SelectionToolbar
-          count={selectedCount}
-          agentBusy={agentBusy}
-          onDelete={deleteSelectedCards}
-          onClear={clearSelection}
-        />
-      ) : null}
-    </DndContext>
+        ) : null}
+      </DndContext>
+    </ConnectorUIContext.Provider>
   );
 }
 
@@ -784,23 +907,27 @@ function MatrixLayout(p: LayoutProps) {
   const { map, config, cardsByPos, agentBusy } = p;
   const xLabel = map.meta.xAxisLabel ?? config.heroMetaFields?.find((f) => f.key === "xAxisLabel")?.placeholder ?? "X axis";
   const yLabel = map.meta.yAxisLabel ?? config.heroMetaFields?.find((f) => f.key === "yAxisLabel")?.placeholder ?? "Y axis";
-  const ROW_LABEL_W = 188;
   const colIds = map.cols.map((c) => c.id);
   const rowIds = map.rows.map((r) => r.id);
+  const cellMinWStyle = { minWidth: MATRIX_CELL_MIN_W } as const;
 
   return (
     <div className="flex flex-col">
-      {/* X-axis band */}
+      {/* X-axis band — leftOffset aligns the label with the first column. */}
       <XAxisBand
         label={xLabel}
         agentBusy={agentBusy}
         onChange={(v) => p.commitOps([{ op: "setMapMeta", key: "xAxisLabel", value: v }])}
+        leftOffset={MATRIX_CONTENT_LEFT_OFFSET}
       />
 
       {/* Header row: y-label gutter + col headers */}
       <SortableContext items={colIds} strategy={horizontalListSortingStrategy}>
-        <div className="flex items-stretch mb-3" style={{ gap: GUTTER, paddingLeft: 32 }}>
-          <div style={{ width: ROW_LABEL_W }} />
+        <div
+          className="flex items-stretch mb-3"
+          style={{ gap: GUTTER, paddingLeft: Y_AXIS_BAND_W }}
+        >
+          <div style={{ width: LABEL_W }} />
           {map.cols.map((col, idx) => (
             <SortableHandle
               key={col.id}
@@ -808,7 +935,8 @@ function MatrixLayout(p: LayoutProps) {
               kind="col-handle"
               payloadId={col.id}
               agentBusy={agentBusy || !!config.fixedCols}
-              className="flex-1 min-w-[220px]"
+              className="flex-1"
+              style={cellMinWStyle}
             >
               <ColHeader
                 label={col.label}
@@ -844,10 +972,11 @@ function MatrixLayout(p: LayoutProps) {
       </SortableContext>
 
       {/* Body grid with relative wrapper for the Y-axis band */}
-      <div className="relative" style={{ paddingLeft: 32 }}>
+      <div className="relative" style={{ paddingLeft: Y_AXIS_BAND_W }}>
         <YAxisBand
           label={yLabel}
           agentBusy={agentBusy}
+          width={Y_AXIS_BAND_W}
           onChange={(v) => p.commitOps([{ op: "setMapMeta", key: "yAxisLabel", value: v }])}
         />
 
@@ -857,7 +986,7 @@ function MatrixLayout(p: LayoutProps) {
             <div
               key={row.id}
               className="flex items-stretch"
-              style={{ gap: GUTTER, minHeight: 168 }}
+              style={{ gap: GUTTER, minHeight: MATRIX_ROW_MIN_H }}
             >
               <SortableHandle
                 id={row.id}
@@ -870,8 +999,8 @@ function MatrixLayout(p: LayoutProps) {
                   kind={row.kind ?? "neutral"}
                   isSelected={p.selectedRowId === row.id}
                   agentBusy={agentBusy}
-                  width={ROW_LABEL_W}
-                  minHeight={168}
+                  width={LABEL_W}
+                  minHeight={MATRIX_ROW_MIN_H}
                   onClick={() => p.onRowSelect(row.id)}
                   onLabelChange={(l) =>
                     p.commitOps([{ op: "renameRow", rowId: row.id, label: l }])
@@ -887,7 +1016,7 @@ function MatrixLayout(p: LayoutProps) {
                 const cards = cardsByPos[`${col.id}:${row.id}`] ?? [];
                 const isSubjectCol = col.kind === "subject";
                 return (
-                  <div key={col.id} className="flex-1 min-w-[220px]">
+                  <div key={col.id} className="flex-1" style={cellMinWStyle}>
                     <SectionContainer
                       kind={isSubjectCol ? "subject" : (row.kind ?? "neutral")}
                       emphasized={isSubjectCol}
@@ -930,7 +1059,7 @@ function MatrixLayout(p: LayoutProps) {
                   ])
                 }
                 fullWidth
-                width={ROW_LABEL_W}
+                width={LABEL_W}
               />
             </div>
           )}

@@ -128,6 +128,27 @@ export const proposeFrameworkToolSchema = {
         },
       },
     },
+    connectors: {
+      type: "object",
+      description:
+        "Optional — ONLY include for frameworks whose meaning depends on arrows/relationships between cards: process maps, flowcharts, service blueprints, workflows, dependency diagrams, causal loops, state diagrams. When enabled, the renderer shows edge handles on cards and the populate step can emit addConnector ops. Do NOT include for plain tabular frameworks (SWOT, JTBD, affinity, journey map, 2x2, etc.) — connectors would be visual noise.",
+      required: ["enabled"],
+      additionalProperties: false,
+      properties: {
+        enabled: { type: "boolean" },
+        allowedKinds: {
+          type: "array",
+          description:
+            "Semantic connector kinds the framework uses. Common: 'sequence' (normal flow), 'handoff' (between swimlanes), 'decision-yes' / 'decision-no' (branches), 'dependency', 'feedback-loop'.",
+          items: { type: "string" },
+        },
+        defaultRouting: {
+          type: "string",
+          enum: ["straight", "orthogonal"],
+          description: "Default path style. 'orthogonal' (right-angle elbows) reads best for swimlane/process maps; 'straight' is better for sparse dependency graphs.",
+        },
+      },
+    },
     seed: {
       type: "object",
       required: ["id", "title", "cols", "rows", "cards", "meta"],

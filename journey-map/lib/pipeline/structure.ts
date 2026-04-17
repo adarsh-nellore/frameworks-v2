@@ -80,7 +80,14 @@ export async function structureMap(
 ): Promise<StructureResult> {
   const start = emptyMap(config);
 
-  const systemPrompt = `${universalSystemPrompt}\n\n## Structuring Phase\n\n${STRUCTURING_BASE_PROMPT}\n\n## This Framework\n\n${config.structuringPrompt}`;
+  const connectorOverride = config.connectors?.enabled
+    ? `\n\n## Connectors ARE enabled for this framework\n\n` +
+      `This framework's config has \`connectors.enabled = true\`. After you add cards, emit \`addConnector\` ops to encode how the work actually flows between them. Reason about causality — which card genuinely leads to which — not visual adjacency.\n\n` +
+      `Allowed connector kinds${config.connectors.allowedKinds && config.connectors.allowedKinds.length ? `: ${config.connectors.allowedKinds.map((k) => `\`${k}\``).join(", ")}` : " are any semantic string that fits the framework"}.\n\n` +
+      `Default routing: \`${config.connectors.defaultRouting ?? "orthogonal"}\`.`
+    : "";
+
+  const systemPrompt = `${universalSystemPrompt}\n\n## Structuring Phase\n\n${STRUCTURING_BASE_PROMPT}\n\n## This Framework\n\n${config.structuringPrompt}${connectorOverride}`;
 
   const userText = [
     preamble ?? "",

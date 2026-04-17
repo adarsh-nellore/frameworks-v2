@@ -73,6 +73,24 @@ export function serializeCodeMarkdown(map: UniversalMap): string {
     lines.push(`| ${escapeMarkdown(label)} | ${values.join(" | ")} |`);
   }
 
+  // Connectors — appended beneath the table using card text so the output
+  // reads without having to cross-reference card ids.
+  if (map.connectors && map.connectors.length > 0) {
+    const textById = new Map(map.cards.map((c) => [c.id, c.text]));
+    lines.push("");
+    lines.push("## Connectors");
+    lines.push("");
+    for (const e of map.connectors) {
+      const from = textById.get(e.sourceCardId) ?? e.sourceCardId;
+      const to = textById.get(e.targetCardId) ?? e.targetCardId;
+      const kind = e.kind ? ` _(${e.kind})_` : "";
+      const label = e.label ? ` — "${e.label}"` : "";
+      lines.push(
+        `- ${escapeMarkdown(firstWords(from, 10))} → ${escapeMarkdown(firstWords(to, 10))}${kind}${label}`
+      );
+    }
+  }
+
   return `${lines.join("\n")}\n`;
 }
 
