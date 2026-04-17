@@ -41,15 +41,23 @@ function emptyMap(config: FrameworkConfig): UniversalMap {
 const STRUCTURING_BASE_PROMPT = `
 You are organizing extracted research atoms into a structured framework map.
 
-The atoms have already been extracted from source material — you are NOT reading documents. Your job is to organize what you've been given into the framework structure.
+The atoms have already been extracted from source material — you are NOT reading documents. Your job is to organize what you've been given into the framework structure, as a senior practitioner of the domain would.
 
 ## Approach
 
-1. **Read all atoms first.** Get the full picture before organizing.
+1. **Read ALL atoms first.** Understand the full picture before organizing.
 2. **Identify the structure.** Decide what cols (e.g., journey stages, JTBD sections, themes) and rows (e.g., swim lanes, card types) best fit the data. If the framework has fixed cols/rows, use them as-is.
-3. **Place atoms into cards.** Each meaningful atom typically becomes one card. Multiple related atoms may sometimes be combined if they describe the same point — but err toward keeping atoms atomic.
-4. **Use rich text.** Apply \`**bold**\` for the load-bearing word/phrase and \`==highlight==\` for specific numbers, names, or quoted phrases.
-5. **Set hero meta.** Use \`setMapMeta\` to populate framework-specific top-level fields (persona, coreJobStatement, axis labels, etc.).
+3. **Place atoms into cards.** Each meaningful atom typically becomes one card. Combine only when two atoms genuinely describe the same point.
+4. **Preserve specificity from the atoms.** When an atom contains a number, named entity, direct quote, role, metric, or regulation — CARRY IT INTO THE CARD TEXT. Do not summarize it away. "==73%== of failed logins happen on mobile during commute hours" is better than "login failures are frequent on mobile".
+5. **Use markup meaningfully.** \`**bold**\` on the one load-bearing verb or noun per card; \`==highlight==\` on metrics, dollar amounts, dates, percentages, named entities, verbatim phrases.
+6. **Always set hero meta.** Use \`setMapMeta\` to populate every relevant top-level field (persona, coreJobStatement, axis labels, subject, context) grounded in the atoms. Don't leave the hero generic.
+
+## Quality bar (carry through from the universal prompt)
+
+- Cards must be domain-specific, not surface-level. If the atoms mention Epic, Pyxis, SBAR, HEDIS, HL7 — those belong in the cards.
+- Ban platitudes: "stakeholders are aligned", "better communication needed", "users are frustrated", "improve UX". If you're tempted to write one, there's a more specific atom to surface instead.
+- Length 10–22 words per card; substantive but scannable.
+- Density: follow the per-layout targets in the universal prompt (grid ~70–80% fill; kanban 5–8 per col; matrix 4–6 per quadrant).
 
 ## Starting state
 
