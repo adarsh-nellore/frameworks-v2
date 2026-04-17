@@ -11,7 +11,8 @@ const TINY_PNG_BASE64 =
 function makeFile(name: string, data: Buffer, type: string): File {
   // `File` is a global in recent Node — falls back to a polyfill-ish shim.
   if (typeof File !== "undefined") {
-    return new File([data], name, { type });
+    const view = new Uint8Array(data);
+    return new File([view], name, { type });
   }
   throw new Error("File global not available — use Node 20+");
 }

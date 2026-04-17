@@ -255,30 +255,32 @@ export default function LandingPage() {
   return (
     <main className="fixed inset-0 overflow-hidden">
       {/* Minimal header — logo top-left only, nothing else */}
-      <header className="absolute top-5 left-6 z-10 flex items-center gap-2">
-        <div className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-ink-primary text-white">
-          <Sparkles className="h-3.5 w-3.5" />
+      <header className="absolute top-6 left-8 z-10 flex items-center gap-2.5">
+        <div className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-ink-primary text-white">
+          <Sparkles className="h-4 w-4" />
         </div>
-        <span className="font-medium text-[14px] text-ink-primary">Frameworks</span>
+        <span className="font-semibold text-[15px] text-ink-primary tracking-tight">Frameworks</span>
       </header>
 
       {/* Deep-link to workspace when boards already exist */}
       {boards.length > 0 && (
         <button
           onClick={() => router.push("/canvas")}
-          className="absolute top-5 right-6 z-10 inline-flex items-center gap-1.5 rounded-full glass px-3 py-1.5 text-[12px] text-ink-secondary hover:text-ink-primary transition-colors"
+          className="absolute top-6 right-8 z-10 inline-flex items-center gap-1.5 rounded-full glass px-4 py-2 text-[13px] text-ink-secondary hover:text-ink-primary transition-colors"
         >
           Open workspace
           <span className="text-ink-muted">→</span>
         </button>
       )}
 
-      {/* Layout: prompt centered in the upper 2/3, framework pills anchored to the
-          bottom. Keeps the prompt the hero while the pills read as a secondary
-          quick-picker toolbar below it. */}
-      <div className="h-full grid grid-rows-[1fr_auto] overflow-hidden">
-        <div className="flex items-center justify-center px-6 pt-16 pb-6 overflow-y-auto chat-scroll">
-          <div className="w-full max-w-[720px] space-y-4">
+      {/* Layout: one vertical scroller — prompt hero up top, framework library
+          directly below. Earlier the pills were pinned to the bottom row of a
+          grid, so on many viewports they read as tucked-away chrome and the
+          user scrolled looking for them. Now they're part of the same
+          continuous column under the hero. */}
+      <div className="h-full overflow-y-auto chat-scroll">
+        <div className="min-h-full flex flex-col items-center px-6 pt-20 pb-16">
+          <div className="w-full max-w-[760px] space-y-5">
           {/* Prompt box (glassmorphic) */}
           <div
             onDragOver={(e) => {
@@ -298,15 +300,15 @@ export default function LandingPage() {
           >
             {/* Attached file + URL chips (above textarea, only when present) */}
             {(files.length > 0 || urls.length > 0) && (
-              <div className="flex flex-wrap gap-1.5 px-5 pt-4">
+              <div className="flex flex-wrap gap-2 px-6 pt-5">
                 {files.map((f, i) => (
                   <span
                     key={`f-${f.name}-${i}`}
-                    className="inline-flex items-center gap-1.5 rounded-full bg-white/80 border border-border-soft px-2.5 py-1 text-[11px] text-ink-secondary"
+                    className="inline-flex items-center gap-1.5 rounded-full bg-white/80 border border-border-soft px-3 py-1.5 text-[12px] text-ink-secondary"
                   >
-                    <FileText className="h-3 w-3 text-ink-muted shrink-0" />
-                    <span className="truncate max-w-[180px]" title={f.name}>{f.name}</span>
-                    <span className="text-ink-muted font-mono">{formatBytes(f.size)}</span>
+                    <FileText className="h-3.5 w-3.5 text-ink-muted shrink-0" />
+                    <span className="truncate max-w-[200px]" title={f.name}>{f.name}</span>
+                    <span className="text-ink-muted font-mono text-[11px]">{formatBytes(f.size)}</span>
                     <button
                       type="button"
                       onClick={() => removeFile(i)}
@@ -314,17 +316,17 @@ export default function LandingPage() {
                       className="text-ink-muted hover:text-ink-primary disabled:opacity-40"
                       aria-label={`Remove ${f.name}`}
                     >
-                      <X className="h-3 w-3" />
+                      <X className="h-3.5 w-3.5" />
                     </button>
                   </span>
                 ))}
                 {urls.map((u, i) => (
                   <span
                     key={`u-${u}-${i}`}
-                    className="inline-flex items-center gap-1.5 rounded-full bg-white/80 border border-border-soft px-2.5 py-1 text-[11px] text-ink-secondary"
+                    className="inline-flex items-center gap-1.5 rounded-full bg-white/80 border border-border-soft px-3 py-1.5 text-[12px] text-ink-secondary"
                   >
-                    <Link2 className="h-3 w-3 text-ink-muted shrink-0" />
-                    <span className="truncate max-w-[200px]" title={u}>{u}</span>
+                    <Link2 className="h-3.5 w-3.5 text-ink-muted shrink-0" />
+                    <span className="truncate max-w-[220px]" title={u}>{u}</span>
                     <button
                       type="button"
                       onClick={() => removeUrl(i)}
@@ -332,7 +334,7 @@ export default function LandingPage() {
                       className="text-ink-muted hover:text-ink-primary disabled:opacity-40"
                       aria-label={`Remove ${u}`}
                     >
-                      <X className="h-3 w-3" />
+                      <X className="h-3.5 w-3.5" />
                     </button>
                   </span>
                 ))}
@@ -353,15 +355,15 @@ export default function LandingPage() {
               }
               className={[
                 "w-full resize-none bg-transparent outline-none",
-                "px-5 pt-5 pb-3 text-[15px] leading-relaxed text-ink-primary placeholder:text-ink-muted",
+                "px-6 pt-6 pb-3 text-[16px] leading-relaxed text-ink-primary placeholder:text-ink-muted",
                 busy ? "opacity-60" : "",
               ].join(" ")}
             />
 
             {/* Inline URL editor (collapsed by default) */}
             {urlDraftOpen && (
-              <div className="px-5 pb-3 flex items-center gap-2">
-                <Link2 className="h-3.5 w-3.5 text-ink-muted shrink-0" />
+              <div className="px-6 pb-3 flex items-center gap-2">
+                <Link2 className="h-4 w-4 text-ink-muted shrink-0" />
                 <input
                   type="url"
                   autoFocus
@@ -378,13 +380,13 @@ export default function LandingPage() {
                   }}
                   disabled={busy}
                   placeholder="https://…"
-                  className="flex-1 rounded-md bg-white/80 border border-border-soft focus:border-ink-primary px-2.5 py-1 text-[12px] text-ink-primary placeholder:text-ink-muted outline-none transition-colors"
+                  className="flex-1 rounded-md bg-white/80 border border-border-soft focus:border-ink-primary px-3 py-1.5 text-[13px] text-ink-primary placeholder:text-ink-muted outline-none transition-colors"
                 />
                 <button
                   type="button"
                   onClick={addUrl}
                   disabled={busy || !urlDraft.trim()}
-                  className="text-[11px] font-medium text-ink-primary hover:text-ink-secondary disabled:opacity-40 transition-colors"
+                  className="text-[12px] font-medium text-ink-primary hover:text-ink-secondary disabled:opacity-40 transition-colors"
                 >
                   Add
                 </button>
@@ -397,30 +399,30 @@ export default function LandingPage() {
                   className="text-ink-muted hover:text-ink-primary transition-colors"
                   aria-label="Cancel URL"
                 >
-                  <X className="h-3.5 w-3.5" />
+                  <X className="h-4 w-4" />
                 </button>
               </div>
             )}
 
             {/* Bottom toolbar — inside the box */}
-            <div className="flex items-center justify-between gap-2 px-3 pb-3">
-              <div className="flex items-center gap-0.5">
+            <div className="flex items-center justify-between gap-2 px-4 pb-4">
+              <div className="flex items-center gap-1">
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={busy}
-                  className="inline-flex items-center justify-center h-8 w-8 rounded-full text-ink-muted hover:text-ink-primary hover:bg-white/70 disabled:opacity-40 transition-colors"
+                  className="inline-flex items-center justify-center h-9 w-9 rounded-full text-ink-muted hover:text-ink-primary hover:bg-white/70 disabled:opacity-40 transition-colors"
                   title="Attach files"
                   aria-label="Attach files"
                 >
-                  <Paperclip className="h-4 w-4" />
+                  <Paperclip className="h-[18px] w-[18px]" />
                 </button>
                 <button
                   type="button"
                   onClick={() => setUrlDraftOpen((o) => !o)}
                   disabled={busy}
                   className={[
-                    "inline-flex items-center justify-center h-8 w-8 rounded-full transition-colors",
+                    "inline-flex items-center justify-center h-9 w-9 rounded-full transition-colors",
                     urlDraftOpen
                       ? "bg-ink-primary/[0.08] text-ink-primary"
                       : "text-ink-muted hover:text-ink-primary hover:bg-white/70",
@@ -429,7 +431,7 @@ export default function LandingPage() {
                   title="Add URL"
                   aria-label="Add URL"
                 >
-                  <Link2 className="h-4 w-4" />
+                  <Link2 className="h-[18px] w-[18px]" />
                 </button>
                 <input
                   ref={fileInputRef}
@@ -446,7 +448,7 @@ export default function LandingPage() {
 
               <div className="flex items-center gap-2">
                 {selectedFramework && (
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-[rgb(var(--accent))]/[0.12] text-[rgb(var(--accent))] px-2.5 py-1 text-[11px] font-medium max-w-[200px]">
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-[rgb(var(--accent))]/[0.12] text-[rgb(var(--accent))] px-3 py-1.5 text-[12px] font-medium max-w-[220px]">
                     <span className="truncate">{selectedFramework.label}</span>
                     <button
                       type="button"
@@ -455,7 +457,7 @@ export default function LandingPage() {
                       className="opacity-70 hover:opacity-100 disabled:opacity-30"
                       aria-label="Clear framework"
                     >
-                      <X className="h-3 w-3" />
+                      <X className="h-3.5 w-3.5" />
                     </button>
                   </span>
                 )}
@@ -464,7 +466,7 @@ export default function LandingPage() {
                   onClick={() => void handleSubmit()}
                   disabled={!canSubmit}
                   className={[
-                    "inline-flex items-center justify-center h-9 w-9 rounded-full transition-colors",
+                    "inline-flex items-center justify-center h-10 w-10 rounded-full transition-colors",
                     canSubmit
                       ? "bg-ink-primary text-white hover:bg-[#1b1c20]"
                       : "bg-ink-primary/10 text-ink-muted cursor-not-allowed",
@@ -479,7 +481,7 @@ export default function LandingPage() {
                       <span className="h-1 w-1 rounded-full bg-white/80 animate-pulse [animation-delay:300ms]" />
                     </span>
                   ) : (
-                    <ArrowUp className="h-4 w-4" />
+                    <ArrowUp className="h-5 w-5" />
                   )}
                 </button>
               </div>
@@ -492,14 +494,14 @@ export default function LandingPage() {
               type="button"
               onClick={() => setShowAdvanced((v) => !v)}
               disabled={busy}
-              className="inline-flex items-center gap-1 text-[11px] font-mono uppercase tracking-wider text-ink-muted hover:text-ink-primary transition-colors disabled:opacity-40"
+              className="inline-flex items-center gap-1.5 text-[12px] font-mono uppercase tracking-[0.18em] text-ink-muted hover:text-ink-primary transition-colors disabled:opacity-40"
             >
-              {showAdvanced ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+              {showAdvanced ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
               Advanced
             </button>
           </div>
           {showAdvanced && (
-            <div className="glass rounded-2xl p-4 space-y-3">
+            <div className="glass rounded-2xl p-5 space-y-3">
               <div className="grid grid-cols-2 gap-2">
                 <input
                   type="text"
@@ -507,7 +509,7 @@ export default function LandingPage() {
                   onChange={(e) => setTitle(e.target.value)}
                   disabled={busy}
                   placeholder="Title hint"
-                  className="rounded-lg bg-white/60 border border-border-soft hover:border-border-medium focus:border-ink-primary focus:bg-white px-2.5 py-1.5 text-[12px] text-ink-primary placeholder:text-ink-muted outline-none transition-colors"
+                  className="rounded-lg bg-white/60 border border-border-soft hover:border-border-medium focus:border-ink-primary focus:bg-white px-3 py-2 text-[13px] text-ink-primary placeholder:text-ink-muted outline-none transition-colors"
                 />
                 <input
                   type="text"
@@ -515,7 +517,7 @@ export default function LandingPage() {
                   onChange={(e) => setPersona(e.target.value)}
                   disabled={busy}
                   placeholder="Persona hint"
-                  className="rounded-lg bg-white/60 border border-border-soft hover:border-border-medium focus:border-ink-primary focus:bg-white px-2.5 py-1.5 text-[12px] text-ink-primary placeholder:text-ink-muted outline-none transition-colors"
+                  className="rounded-lg bg-white/60 border border-border-soft hover:border-border-medium focus:border-ink-primary focus:bg-white px-3 py-2 text-[13px] text-ink-primary placeholder:text-ink-muted outline-none transition-colors"
                 />
               </div>
               <label className="flex items-center gap-2 cursor-pointer select-none">
@@ -524,9 +526,9 @@ export default function LandingPage() {
                   checked={fidelityMode}
                   onChange={(e) => setFidelityMode(e.target.checked)}
                   disabled={busy}
-                  className="h-3.5 w-3.5 rounded border-border-medium text-ink-primary focus:ring-1 focus:ring-ink-primary/30"
+                  className="h-4 w-4 rounded border-border-medium text-ink-primary focus:ring-1 focus:ring-ink-primary/30"
                 />
-                <span className="text-[12px] text-ink-secondary leading-snug">
+                <span className="text-[13px] text-ink-secondary leading-snug">
                   Higher fidelity{" "}
                   <span className="text-ink-muted">(critique + revision pass; ~30–60s slower)</span>
                 </span>
@@ -535,16 +537,23 @@ export default function LandingPage() {
           )}
 
           {combinedError && (
-            <div className="glass rounded-xl px-4 py-3 text-[12px] text-rose-900 bg-rose-50/80 border border-rose-100">
+            <div className="glass rounded-xl px-4 py-3 text-[13px] text-rose-900 bg-rose-50/80 border border-rose-100">
               {combinedError}
             </div>
           )}
           </div>
-        </div>
 
-        {/* Framework pills — anchored to the bottom as a quick-picker toolbar */}
-        <div className="px-6 pb-8">
-          <div className="w-full max-w-[880px] mx-auto">
+          {/* Framework library — sits directly under the hero in the same
+              scroll container. Eyebrow label makes it read as a real section
+              rather than a chrome toolbar. */}
+          <div className="w-full max-w-[880px] mt-10">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="h-px flex-1 bg-border-soft/80" />
+              <span className="font-mono text-[10px] tracking-[0.22em] uppercase text-ink-muted">
+                Or start from a framework
+              </span>
+              <div className="h-px flex-1 bg-border-soft/80" />
+            </div>
             <FrameworkPills selectedId={selectedId} onSelect={setSelectedId} />
           </div>
         </div>

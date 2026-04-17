@@ -49,9 +49,9 @@ export function FrameworkPills({ selectedId, onSelect }: FrameworkPillsProps) {
   }, [query, frameworks]);
 
   return (
-    <div className="w-full space-y-2.5">
-      <div className="relative">
-        <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-ink-muted" />
+    <div className="w-full space-y-4">
+      <div className="relative max-w-[420px] mx-auto">
+        <Search className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-muted" />
         <input
           type="text"
           value={query}
@@ -59,30 +59,32 @@ export function FrameworkPills({ selectedId, onSelect }: FrameworkPillsProps) {
           placeholder="Search frameworks"
           className={[
             "w-full rounded-full glass border-0",
-            "pl-9 pr-9 py-2 text-[12px] text-ink-primary placeholder:text-ink-muted",
-            "focus:outline-none focus:ring-1 focus:ring-ink-primary/30 transition",
+            "pl-11 pr-11 py-2.5 text-[14px] text-ink-primary placeholder:text-ink-muted",
+            "focus:outline-none focus:ring-2 focus:ring-ink-primary/20 transition",
           ].join(" ")}
         />
         {query && (
           <button
             type="button"
             onClick={() => setQuery("")}
-            className="absolute right-2 top-1/2 -translate-y-1/2 h-5 w-5 grid place-items-center rounded-full text-ink-muted hover:text-ink-primary hover:bg-ink-primary/[0.06] transition-colors"
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 h-6 w-6 grid place-items-center rounded-full text-ink-muted hover:text-ink-primary hover:bg-ink-primary/[0.06] transition-colors"
             aria-label="Clear search"
           >
-            <X className="h-3 w-3" />
+            <X className="h-3.5 w-3.5" />
           </button>
         )}
       </div>
 
-      <div className="flex flex-wrap justify-center gap-1.5 max-h-[120px] overflow-y-auto chat-scroll py-1">
+      {/* No max-height — the library flows naturally and the whole page
+          scrolls. Users can see more than 5–6 frameworks at a glance. */}
+      <div className="flex flex-wrap justify-center gap-2">
         {/* Custom (default) pill — always first, shows as selected when nothing else is. */}
         <PillButton
           label="Custom"
           sub="Default"
           selected={selectedId === null}
           onClick={() => onSelect(null)}
-          icon={<Sparkles className="h-3 w-3" />}
+          icon={<Sparkles className="h-3.5 w-3.5" />}
         />
         {filtered.map((fw) => (
           <PillButton
@@ -94,8 +96,8 @@ export function FrameworkPills({ selectedId, onSelect }: FrameworkPillsProps) {
           />
         ))}
         {filtered.length === 0 && query && (
-          <span className="text-[11px] text-ink-muted px-3 py-1.5">
-            No frameworks match "{query}"
+          <span className="text-[13px] text-ink-muted px-3 py-2">
+            No frameworks match &ldquo;{query}&rdquo;
           </span>
         )}
       </div>
@@ -123,23 +125,23 @@ function PillButton({
       type="button"
       onClick={onClick}
       className={[
-        "inline-flex items-center gap-1.5 rounded-full px-3 py-1.5",
-        "text-[12px] font-medium transition-all",
+        "inline-flex items-center gap-2 rounded-full px-4 py-2",
+        "text-[13px] font-medium transition-all",
         "border",
         selected
           ? "bg-[rgb(var(--accent))] text-white border-transparent shadow-card"
-          : "bg-[rgb(var(--accent))]/[0.08] text-[rgb(var(--accent))] border-[rgb(var(--accent))]/20 hover:bg-[rgb(var(--accent))]/[0.14] hover:border-[rgb(var(--accent))]/30",
+          : "bg-[rgb(var(--accent))]/[0.08] text-[rgb(var(--accent))] border-[rgb(var(--accent))]/20 hover:bg-[rgb(var(--accent))]/[0.14] hover:border-[rgb(var(--accent))]/35",
       ].join(" ")}
     >
       {icon}
-      <span className="truncate max-w-[200px]">{label}</span>
+      <span className="truncate max-w-[220px]">{label}</span>
       {sub && !selected && (
-        <span className="font-mono text-[8px] uppercase tracking-wider opacity-60">
+        <span className="font-mono text-[9px] uppercase tracking-[0.18em] opacity-60">
           {sub}
         </span>
       )}
       {isCustom && (
-        <span className="font-mono text-[8px] uppercase tracking-wider opacity-60">
+        <span className="font-mono text-[9px] uppercase tracking-[0.18em] opacity-60">
           custom
         </span>
       )}
