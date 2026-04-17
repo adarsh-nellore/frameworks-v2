@@ -51,8 +51,30 @@ export type Board = {
   createdAt: number;
 };
 
-export type CanvasState = {
+/**
+ * A Project is a whiteboard: one workspace that owns its own set of boards
+ * and its own current selection. Users can have many projects and switch
+ * between them. Each project persists its boards and activeBoardId; creating
+ * a new project yields an empty whiteboard without losing existing work.
+ */
+export type Project = {
+  id: string;
+  name: string;
+  createdAt: number;
   boards: Board[];
+  activeBoardId: string | null;
+};
+
+export type CanvasState = {
+  /** All projects the user has in localStorage. Always ≥ 1 after hydration —
+   *  if storage is empty, a "Default project" is created on boot. */
+  projects: Project[];
+  /** The currently-visible project. Always points at an existing project. */
+  activeProjectId: string | null;
+  /** Boards of the active project, surfaced at the top level for backward
+   *  compat with every existing consumer (BoardFrame, TopBar, Copilot, etc.). */
+  boards: Board[];
+  /** activeBoardId of the active project. */
   activeBoardId: string | null;
   hydrated: boolean;
 };

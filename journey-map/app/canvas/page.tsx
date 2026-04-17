@@ -11,6 +11,7 @@ import { TopBar } from "@/components/TopBar";
 import { ZoomControls } from "@/components/ZoomControls";
 import { BoardFrame } from "@/components/BoardFrame";
 import { BoardsPanel } from "@/components/BoardsPanel";
+import { ProjectsSwitcher } from "@/components/ProjectsSwitcher";
 import { CanvasContextMenuProvider } from "@/components/ui/CanvasContextMenu";
 import {
   getFramework,
@@ -55,15 +56,19 @@ function CanvasPageInner() {
     cancelPending,
   } = useCanvas();
   const activeBoard = useActiveBoard();
+  const { projects } = useCanvas();
 
-  // No boards in the workspace? Send the user back to the landing instead of
-  // showing an empty-state page — the landing IS the home. This keeps the app
-  // to two meaningful surfaces: the prompt hero and the board workspace.
+  // First-time user (exactly one, empty, project) → send to the landing page
+  // which IS the "add your first board" surface. Users with multiple projects
+  // are allowed to sit on an empty project — switching back to it is a valid
+  // state, not a redirect trigger.
   useEffect(() => {
-    if (hydrated && boards.length === 0) {
+    if (!hydrated) return;
+    if (boards.length > 0) return;
+    if (projects.length <= 1) {
       router.replace("/");
     }
-  }, [hydrated, boards.length, router]);
+  }, [hydrated, boards.length, projects.length, router]);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -435,6 +440,8 @@ function CanvasPageInner() {
           />
         </>
       )}
+
+      <ProjectsSwitcher />
 
       <BoardsPanel
         boards={boards}
