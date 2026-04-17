@@ -37,6 +37,7 @@ export type FrameworkModule = {
     busy?: boolean;
     selection: unknown;
     onSelectionChange: (next: unknown) => void;
+    createdAt?: number;
   }>;
 
   // Toolbar suggestion pills

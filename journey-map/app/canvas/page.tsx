@@ -11,6 +11,7 @@ import { TopBar } from "@/components/TopBar";
 import { ZoomControls } from "@/components/ZoomControls";
 import { BoardFrame } from "@/components/BoardFrame";
 import { BoardsPanel } from "@/components/BoardsPanel";
+import { CanvasContextMenuProvider } from "@/components/ui/CanvasContextMenu";
 import {
   getFramework,
   isDynamicFramework,
@@ -27,7 +28,9 @@ import type { Board } from "@/lib/canvas/types";
 export default function CanvasPage() {
   return (
     <ZoomProvider>
-      <CanvasPageInner />
+      <CanvasContextMenuProvider>
+        <CanvasPageInner />
+      </CanvasContextMenuProvider>
     </ZoomProvider>
   );
 }

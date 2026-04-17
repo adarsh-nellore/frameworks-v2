@@ -18,6 +18,8 @@ type Props = {
   width?: number;
   /** Subject highlight (competitive map: this col is "us"). */
   isSubject?: boolean;
+  /** Right-click → parent builds the menu items for this column. */
+  onContextMenu?: (e: React.MouseEvent) => void;
 };
 
 /**
@@ -35,6 +37,7 @@ export function ColHeader({
   onRemove,
   width,
   isSubject = false,
+  onContextMenu,
 }: Props) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(label);
@@ -79,6 +82,7 @@ export function ColHeader({
         e.stopPropagation();
         if (!agentBusy) setEditing(true);
       }}
+      onContextMenu={onContextMenu}
     >
       <div
         className={[
@@ -162,7 +166,14 @@ export function ColHeader({
               e.stopPropagation();
               onRemove();
             }}
-            className="opacity-0 group-hover:opacity-100 transition-opacity rounded-md w-5 h-5 grid place-items-center text-ink-muted hover:text-rose-600 hover:bg-rose-50 shrink-0"
+            className={[
+              "transition-opacity rounded-md w-5 h-5 grid place-items-center shrink-0",
+              // Visible at rest, solid on hover — no longer gated on group-hover
+              // so discovery doesn't require hovering every header.
+              isSelected
+                ? "text-white/70 hover:text-white hover:bg-white/20"
+                : "text-ink-muted/60 hover:text-rose-600 hover:bg-rose-50",
+            ].join(" ")}
             aria-label="Remove"
           >
             <span className="text-[14px] leading-none">×</span>

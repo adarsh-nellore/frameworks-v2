@@ -66,6 +66,9 @@ type Props = {
   onTextChange: (cardId: string, text: string) => void;
   onMetaChange?: (cardId: string, key: string, value: string | null) => void;
   onRemove?: (cardId: string) => void;
+  /** Right-click context menu. Parent builds the item list; we surface the
+   * event at the card's root. */
+  onContextMenu?: (e: React.MouseEvent, cardId: string) => void;
 };
 
 export function GridCard({
@@ -89,6 +92,7 @@ export function GridCard({
   onTextChange,
   onMetaChange,
   onRemove,
+  onContextMenu,
 }: Props) {
   const drag = useDraggable({
     id: card.id,
@@ -209,6 +213,9 @@ export function GridCard({
       className={widthClass}
       style={isDragging ? { opacity: 0.3 } : undefined}
       onClick={handleClick}
+      onContextMenu={
+        onContextMenu ? (e) => onContextMenu(e, card.id) : undefined
+      }
       {...(editing ? {} : drag.listeners)}
       {...(editing ? {} : drag.attributes)}
     >

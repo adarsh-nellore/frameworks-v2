@@ -15,6 +15,8 @@ type Props = {
   width?: number;
   /** Min height of the rail. Should match the row track height (default 160). */
   minHeight?: number;
+  /** Right-click → parent builds the menu items for this row. */
+  onContextMenu?: (e: React.MouseEvent) => void;
 };
 
 /**
@@ -31,6 +33,7 @@ export function RowLabelRail({
   onRemove,
   width = 200,
   minHeight = 160,
+  onContextMenu,
 }: Props) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(label);
@@ -73,6 +76,7 @@ export function RowLabelRail({
         e.stopPropagation();
         if (!agentBusy) setEditing(true);
       }}
+      onContextMenu={onContextMenu}
     >
       <div
         className={[
@@ -124,7 +128,12 @@ export function RowLabelRail({
               e.stopPropagation();
               onRemove();
             }}
-            className="opacity-0 group-hover:opacity-100 transition-opacity rounded-md w-5 h-5 grid place-items-center text-ink-muted hover:text-rose-600 hover:bg-rose-50 shrink-0"
+            className={[
+              "transition-opacity rounded-md w-5 h-5 grid place-items-center shrink-0",
+              isSelected
+                ? "text-white/70 hover:text-white hover:bg-white/20"
+                : "text-ink-muted/60 hover:text-rose-600 hover:bg-rose-50",
+            ].join(" ")}
             aria-label="Remove"
           >
             <span className="text-[14px] leading-none">×</span>

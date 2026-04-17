@@ -118,8 +118,41 @@ export function FreeformLayout({
     ]);
   }
 
+  // Double-click on empty canvas → add a new note exactly where the user
+  // clicked. Falls back to the first col/row so even a bare freeform board
+  // (one default cluster) accepts the gesture. We ignore dbl-clicks that
+  // originate on an existing card or floating UI so we don't create a phantom
+  // card while editing.
+  function handleCanvasDoubleClick(e: React.MouseEvent) {
+    if (agentBusy) return;
+    const target = e.target as HTMLElement | null;
+    if (target?.closest?.("[data-card-el]")) return;
+    if (target?.closest?.("[data-floating]")) return;
+    if (target?.closest?.("[data-freeform-shape]")) return;
+    const host = e.currentTarget as HTMLDivElement;
+    const rect = host.getBoundingClientRect();
+    const localX = Math.max(24, Math.min(BOARD_W - CARD_W - 24, e.clientX - rect.left - CARD_W / 2));
+    const localY = Math.max(24, Math.min(BOARD_H - CARD_H - 24, e.clientY - rect.top - 16));
+    const colId = map.cols[0]?.id ?? "c1";
+    const rowId = map.rows[0]?.id ?? "r1";
+    commitOps([
+      {
+        op: "addCard",
+        colId,
+        rowId,
+        text: "",
+        meta: { x: String(snap(localX)), y: String(snap(localY)) },
+      },
+    ]);
+  }
+
   return (
-    <div className="relative" style={{ width: BOARD_W, height: BOARD_H }} data-stage>
+    <div
+      className="relative"
+      style={{ width: BOARD_W, height: BOARD_H }}
+      data-stage
+      onDoubleClick={handleCanvasDoubleClick}
+    >
       {/* Toolbar — cluster chips + shape palette */}
       <div className="absolute top-3 left-3 z-20 flex flex-wrap gap-1.5 max-w-[85%]" data-floating>
         {map.cols.flatMap((col) =>

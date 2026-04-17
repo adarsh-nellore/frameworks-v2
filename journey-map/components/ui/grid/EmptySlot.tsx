@@ -13,6 +13,8 @@ type Props = {
   size?: "tall" | "short";
   /** Visible affordance label. Defaults to a single "+" glyph. */
   label?: string;
+  /** Right-click menu (parent builds items). */
+  onContextMenu?: (e: React.MouseEvent) => void;
 };
 
 /**
@@ -27,6 +29,7 @@ export function EmptySlot({
   onAdd,
   size = "tall",
   label,
+  onContextMenu,
 }: Props) {
   const drop = useDroppable({
     id: droppableId ?? `empty:${Math.random().toString(36).slice(2)}`,
@@ -45,6 +48,11 @@ export function EmptySlot({
         e.stopPropagation();
         onAdd();
       }}
+      onDoubleClick={(e) => {
+        e.stopPropagation();
+        onAdd();
+      }}
+      onContextMenu={onContextMenu}
       className={[
         "group w-full rounded-xl flex-1 flex items-center justify-center gap-1.5",
         "border border-dashed transition-colors",

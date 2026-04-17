@@ -28,6 +28,14 @@ type Props = {
   locked?: boolean;
 };
 
+// Elements that claim the pointer for their own interaction. Pan the canvas
+// only when the pointer lands OUTSIDE any of these — i.e. on the true canvas
+// background (no board above it).
+//
+// Boards themselves (data-board-frame, data-board-map-root, data-board-header)
+// are interactive: click-drag on a board body moves the BOARD, not the canvas.
+// To still allow pan-over-anything, the user has three overrides: hold Space,
+// use the middle mouse button, or use the trackpad wheel.
 const DEFAULT_INTERACTIVE_SELECTOR =
   "[data-block],[data-row],[data-stage],[data-empty-slot],[data-row-shell],[data-floating],[data-edge-zone],[data-board-frame],[data-board-header],[data-board-map-root]";
 
@@ -49,6 +57,45 @@ export function Canvas({
   const innerRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const [isPanning, setIsPanning] = useState(false);
+  // Space-hold "grab" mode: any pointer-down pans the canvas while space is
+  // held, regardless of what's underneath (card, frame, chrome). Matches the
+  // Figma/Miro muscle memory of "space+drag to move around".
+  const [spaceHeld, setSpaceHeld] = useState(false);
+  const spaceHeldRef = useRef(false);
+  spaceHeldRef.current = spaceHeld;
+
+  useEffect(() => {
+    function isTypingTarget(t: EventTarget | null): boolean {
+      const el = t as HTMLElement | null;
+      if (!el) return false;
+      const tag = el.tagName?.toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select") return true;
+      if (el.isContentEditable) return true;
+      return false;
+    }
+    function onDown(e: KeyboardEvent) {
+      if (e.code !== "Space") return;
+      if (isTypingTarget(e.target)) return;
+      if (e.repeat) return;
+      e.preventDefault();
+      setSpaceHeld(true);
+    }
+    function onUp(e: KeyboardEvent) {
+      if (e.code !== "Space") return;
+      setSpaceHeld(false);
+    }
+    function onBlur() {
+      setSpaceHeld(false);
+    }
+    window.addEventListener("keydown", onDown);
+    window.addEventListener("keyup", onUp);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onDown);
+      window.removeEventListener("keyup", onUp);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, []);
 
   // Live refs so the (mount-once) native wheel listener always sees fresh state.
   const xRef = useRef(x);
@@ -170,9 +217,15 @@ export function Canvas({
   const handlePointerDown = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
       if (locked) return;
-      if (e.button !== 0 && e.pointerType !== "touch") return;
+      // Middle-click always pans (muscle memory from every map/canvas tool).
+      const isMiddle = e.button === 1;
+      // Left-click only, OR touch, OR space-held grab-mode.
+      if (!isMiddle && e.button !== 0 && e.pointerType !== "touch") return;
       const target = e.target as HTMLElement;
-      if (target.closest(interactiveSelector)) return;
+      // Space-hold and middle-click bypass the interactive selector: the user
+      // explicitly asked to pan.
+      const override = spaceHeldRef.current || isMiddle;
+      if (!override && target.closest(interactiveSelector)) return;
       e.preventDefault();
       const startX = e.clientX;
       const startY = e.clientY;
@@ -225,6 +278,19 @@ export function Canvas({
     <div
       ref={outerRef}
       onPointerDown={handlePointerDown}
+      onContextMenu={(e) => {
+        // Extra belt-and-suspenders: kill the native context menu for right-
+        // clicks landing on the bare canvas root (no surface-specific menu).
+        // Per-surface onContextMenu calls still run first and open our menu.
+        const t = e.target as HTMLElement;
+        if (
+          t.tagName === "INPUT" ||
+          t.tagName === "TEXTAREA" ||
+          t.isContentEditable
+        )
+          return;
+        e.preventDefault();
+      }}
       className={[
         "absolute inset-0 overflow-hidden touch-none select-none",
         isPanning ? "cursor-grabbing" : "cursor-grab",

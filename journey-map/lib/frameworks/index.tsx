@@ -31,6 +31,7 @@ type GridProps = {
   busy?: boolean;
   selection: unknown;
   onSelectionChange: (next: unknown) => void;
+  createdAt?: number;
 };
 
 const FrameworkGrid = dynamic<GridProps & { config: FrameworkConfig }>(

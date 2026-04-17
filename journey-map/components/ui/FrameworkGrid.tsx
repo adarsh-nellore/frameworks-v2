@@ -38,6 +38,13 @@ import { ChromeLayer } from "./grid/ChromeLayer";
 import { ConnectorLayer, type ConnectorDraft } from "./grid/ConnectorLayer";
 import { ConnectorUIContext, type ConnectorUI } from "./grid/connector-ui-context";
 import type { ConnectorAnchor } from "@/lib/frameworks/universal/types";
+import { useCanvasContextMenu } from "./CanvasContextMenu";
+import {
+  cardMenu,
+  colMenu,
+  rowMenu,
+  slotMenu,
+} from "./canvas-menus";
 import {
   CARD_W,
   GUTTER,
@@ -57,6 +64,7 @@ type Props = {
   busy?: boolean;
   selection: unknown;
   onSelectionChange: (next: unknown) => void;
+  createdAt?: number;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -70,12 +78,14 @@ export function FrameworkGrid({
   busy,
   selection,
   onSelectionChange,
+  createdAt,
 }: Props) {
   const sel = (selection as UniversalSelection | null) ?? null;
   const agentBusy = !!busy;
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
   );
+  const contextMenu = useCanvasContextMenu();
   // Active drag state — when a card or container is being dragged, this captures
   // what's moving so we can render group-ghost feedback for multi-select drags.
   const [activeDrag, setActiveDrag] = useState<
@@ -372,6 +382,38 @@ export function FrameworkGrid({
     [connectorsEnabled, beginConnectorDrag]
   );
 
+  // ── Context-menu dispatchers ─────────────────────────────────────────────
+  // Each surface's right-click handler. Surfaces keep their own onContextMenu
+  // prop minimal; the menu items themselves are computed here where we have
+  // access to the full map + commitOps.
+  function openCardMenu(e: React.MouseEvent, cardId: string) {
+    const card = map.cards.find((c) => c.id === cardId);
+    if (!card) return;
+    contextMenu.open(
+      e,
+      cardMenu({
+        map,
+        card,
+        commitOps,
+        // No imperative editing hook yet — users can still double-click / click
+        // to enter edit mode; omitting `beginEdit` hides that menu item.
+      })
+    );
+  }
+  function openColMenuHandler(e: React.MouseEvent, colId: string) {
+    const col = map.cols.find((c) => c.id === colId);
+    if (!col) return;
+    contextMenu.open(e, colMenu({ map, col, config, commitOps }));
+  }
+  function openRowMenuHandler(e: React.MouseEvent, rowId: string) {
+    const row = map.rows.find((r) => r.id === rowId);
+    if (!row) return;
+    contextMenu.open(e, rowMenu({ map, row, config, commitOps }));
+  }
+  function openSlotMenu(e: React.MouseEvent, colId: string, rowId: string) {
+    contextMenu.open(e, slotMenu({ colId, rowId, commitOps }));
+  }
+
   const shared = {
     map,
     config,
@@ -392,6 +434,10 @@ export function FrameworkGrid({
     onAddCardAt: addCardAt,
     onAddSubItem: addSubItem,
     onPromoteChild: promoteChild,
+    onCardContextMenu: openCardMenu,
+    onColContextMenu: openColMenuHandler,
+    onRowContextMenu: openRowMenuHandler,
+    onSlotContextMenu: openSlotMenu,
     commitOps,
   };
 
@@ -432,7 +478,7 @@ export function FrameworkGrid({
     <ConnectorUIContext.Provider value={connectorUIValue}>
       <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
         <div className="flex flex-col" onClick={handleCanvasClick}>
-          <HeroBanner map={map} config={config} agentBusy={agentBusy} commitOps={commitOps} />
+          <HeroBanner map={map} config={config} createdAt={createdAt} />
 
           <div ref={cardsContainerRef} className="relative">
             {config.layout === "grid" && <GridLayout {...shared} />}
@@ -508,6 +554,11 @@ type LayoutProps = {
   onAddSubItem: (parentCardId: string) => void;
   /** Promote a sub-item to a top-level card (reparentCard → null). */
   onPromoteChild: (childId: string) => void;
+  /** Context menu dispatchers — right-click handlers at each surface. */
+  onCardContextMenu: (e: React.MouseEvent, cardId: string) => void;
+  onColContextMenu: (e: React.MouseEvent, colId: string) => void;
+  onRowContextMenu: (e: React.MouseEvent, rowId: string) => void;
+  onSlotContextMenu: (e: React.MouseEvent, colId: string, rowId: string) => void;
   commitOps: (ops: Op[]) => void;
 };
 
@@ -553,6 +604,7 @@ function GridLayout(p: LayoutProps) {
                       ? undefined
                       : () => p.commitOps([{ op: "removeCol", colId: col.id }])
                   }
+                  onContextMenu={(e) => p.onColContextMenu(e, col.id)}
                 />
               </div>
             </SortableHandle>
@@ -604,6 +656,7 @@ function GridLayout(p: LayoutProps) {
                         ? undefined
                         : () => p.commitOps([{ op: "removeRow", rowId: row.id }])
                     }
+                    onContextMenu={(e) => p.onRowContextMenu(e, row.id)}
                   />
                 </SortableHandle>
                 {map.cols.map((col) => {
@@ -627,6 +680,8 @@ function GridLayout(p: LayoutProps) {
                       onAddCard={() => p.onAddCardAt(col.id, row.id)}
                       onAddSubItem={p.onAddSubItem}
                       onPromoteChild={p.onPromoteChild}
+                      onCardContextMenu={p.onCardContextMenu}
+                      onSlotContextMenu={p.onSlotContextMenu}
                       metaFields={config.cardMetaFields}
                     />
                   );
@@ -673,6 +728,8 @@ function CellSlotGrid({
   onAddCard,
   onAddSubItem,
   onPromoteChild,
+  onCardContextMenu,
+  onSlotContextMenu,
   metaFields,
 }: {
   colId: string;
@@ -691,6 +748,8 @@ function CellSlotGrid({
   onAddCard: () => void;
   onAddSubItem: (parentCardId: string) => void;
   onPromoteChild: (childId: string) => void;
+  onCardContextMenu: (e: React.MouseEvent, cardId: string) => void;
+  onSlotContextMenu: (e: React.MouseEvent, colId: string, rowId: string) => void;
   metaFields?: CardMetaField[];
 }) {
   const drop = useDroppable({
@@ -713,6 +772,7 @@ function CellSlotGrid({
           agentBusy={agentBusy}
           onAdd={onAddCard}
           size="tall"
+          onContextMenu={(e) => onSlotContextMenu(e, colId, rowId)}
         />
       ) : (
         <>
@@ -740,6 +800,7 @@ function CellSlotGrid({
               onTextChange={onEditCard}
               onMetaChange={onChangeMeta}
               onRemove={onRemoveCard}
+              onContextMenu={onCardContextMenu}
             />
           ))}
           <AddCardButton agentBusy={agentBusy} onAdd={onAddCard} />
@@ -817,6 +878,7 @@ function KanbanLayout(p: LayoutProps) {
                       ? undefined
                       : () => p.commitOps([{ op: "removeCol", colId: col.id }])
                   }
+                  onContextMenu={(e) => p.onColContextMenu(e, col.id)}
                 />
               </div>
 
@@ -843,6 +905,8 @@ function KanbanLayout(p: LayoutProps) {
                       onAddCard={() => p.onAddCardAt(col.id, row.id)}
                       onAddSubItem={p.onAddSubItem}
                       onPromoteChild={p.onPromoteChild}
+                      onCardContextMenu={p.onCardContextMenu}
+                      onSlotContextMenu={p.onSlotContextMenu}
                       metaFields={config.cardMetaFields}
                     />
                   );
@@ -865,6 +929,8 @@ function KanbanLayout(p: LayoutProps) {
                   onAddCard={() => p.onAddCardAt(col.id, defaultRowId)}
                   onAddSubItem={p.onAddSubItem}
                   onPromoteChild={p.onPromoteChild}
+                  onCardContextMenu={p.onCardContextMenu}
+                  onSlotContextMenu={p.onSlotContextMenu}
                   metaFields={config.cardMetaFields}
                 />
                 )}
@@ -956,6 +1022,7 @@ function MatrixLayout(p: LayoutProps) {
                     ? undefined
                     : () => p.commitOps([{ op: "removeCol", colId: col.id }])
                 }
+                onContextMenu={(e) => p.onColContextMenu(e, col.id)}
               />
             </SortableHandle>
           ))}
@@ -1012,6 +1079,7 @@ function MatrixLayout(p: LayoutProps) {
                       ? undefined
                       : () => p.commitOps([{ op: "removeRow", rowId: row.id }])
                   }
+                  onContextMenu={(e) => p.onRowContextMenu(e, row.id)}
                 />
               </SortableHandle>
               {map.cols.map((col) => {
@@ -1040,6 +1108,8 @@ function MatrixLayout(p: LayoutProps) {
                         onAddCard={() => p.onAddCardAt(col.id, row.id)}
                         onAddSubItem={p.onAddSubItem}
                         onPromoteChild={p.onPromoteChild}
+                        onCardContextMenu={p.onCardContextMenu}
+                        onSlotContextMenu={p.onSlotContextMenu}
                         metaFields={config.cardMetaFields}
                         compact
                       />
@@ -1093,6 +1163,8 @@ function ColCardStack({
   onAddCard,
   onAddSubItem,
   onPromoteChild,
+  onCardContextMenu,
+  onSlotContextMenu,
   metaFields,
   compact = false,
 }: {
@@ -1112,6 +1184,8 @@ function ColCardStack({
   onAddCard: () => void;
   onAddSubItem: (parentCardId: string) => void;
   onPromoteChild: (childId: string) => void;
+  onCardContextMenu: (e: React.MouseEvent, cardId: string) => void;
+  onSlotContextMenu: (e: React.MouseEvent, colId: string, rowId: string) => void;
   metaFields?: CardMetaField[];
   compact?: boolean;
 }) {
@@ -1137,6 +1211,7 @@ function ColCardStack({
           onAdd={onAddCard}
           size="short"
           label="Add card"
+          onContextMenu={(e) => onSlotContextMenu(e, colId, rowId)}
         />
       ) : (
         <>
@@ -1163,6 +1238,7 @@ function ColCardStack({
               onTextChange={onEditCard}
               onMetaChange={onChangeMeta}
               onRemove={onRemoveCard}
+              onContextMenu={onCardContextMenu}
             />
           ))}
           <AddCardButton agentBusy={agentBusy} onAdd={onAddCard} />
@@ -1190,6 +1266,8 @@ function SubGroup({
   onAddCard,
   onAddSubItem,
   onPromoteChild,
+  onCardContextMenu,
+  onSlotContextMenu,
   metaFields,
 }: {
   label: string;
@@ -1209,6 +1287,8 @@ function SubGroup({
   onAddCard: () => void;
   onAddSubItem: (parentCardId: string) => void;
   onPromoteChild: (childId: string) => void;
+  onCardContextMenu: (e: React.MouseEvent, cardId: string) => void;
+  onSlotContextMenu: (e: React.MouseEvent, colId: string, rowId: string) => void;
   metaFields?: CardMetaField[];
 }) {
   const theme = kindTheme(kind);
@@ -1248,6 +1328,8 @@ function SubGroup({
         onAddCard={onAddCard}
         onAddSubItem={onAddSubItem}
         onPromoteChild={onPromoteChild}
+        onCardContextMenu={onCardContextMenu}
+        onSlotContextMenu={onSlotContextMenu}
         metaFields={metaFields}
         compact
       />
