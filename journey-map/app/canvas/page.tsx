@@ -2,16 +2,6 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import {
-  applyDesignSystem,
-  applyDesignTokenCssVars,
-  applyTheme,
-  loadStoredDesignSystemJson,
-  loadStoredDesignTokenCssVarsJson,
-  loadStoredThemeJson,
-  parseDesignSystem,
-  parseThemeImport,
-} from "@/lib/theme";
 import { Canvas } from "@/components/Canvas";
 import { Copilot } from "@/components/Copilot";
 import { CustomFrameworkDialog } from "@/components/CustomFrameworkDialog";
@@ -167,37 +157,11 @@ function CanvasPageInner() {
     return () => window.removeEventListener("keydown", onKey);
   }, [activeBoardId, activeBoard, activeFramework, setActiveBoardId, updateBoardMap, setBoardSelection]);
 
-  // Apply stored theme/DS globally to the canvas root rather than per-board,
-  // so every board on the workspace shares one visual language.
-  useLayoutEffect(() => {
-    const target = document.documentElement;
-    try {
-      const themeRaw = loadStoredThemeJson();
-      if (themeRaw) {
-        try {
-          const parsed = parseThemeImport(JSON.parse(themeRaw) as unknown);
-          if (parsed.ok) applyTheme(parsed.theme, target);
-        } catch { /* ignore */ }
-      }
-      const extra = loadStoredDesignTokenCssVarsJson();
-      if (extra) {
-        try {
-          applyDesignTokenCssVars(JSON.parse(extra) as Record<string, string>, target);
-        } catch {
-          applyDesignTokenCssVars(undefined, target);
-        }
-      } else {
-        applyDesignTokenCssVars(undefined, target);
-      }
-      const dsRaw = loadStoredDesignSystemJson();
-      if (dsRaw) {
-        try {
-          const parsed = parseDesignSystem(JSON.parse(dsRaw) as unknown);
-          if (parsed.ok) applyDesignSystem(parsed.ds, target);
-        } catch { /* ignore */ }
-      }
-    } catch { /* ignore */ }
-  }, []);
+  // Theme hydration lives on each BoardFrame now (see hydrateBoardTheme in
+  // BoardFrame.tsx). Applying to document.documentElement here would re-paint
+  // the whole app chrome — copilot, sidebar, landing nav — which is not what
+  // the user wants. Themes should read "like a poster applied to the board"
+  // and leave the rest of the app alone.
 
   const onTitleChange = useCallback(
     (title: string) => {

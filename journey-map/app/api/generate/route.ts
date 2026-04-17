@@ -328,19 +328,39 @@ async function runTopicPopulate(
   preamble: string | null
 ): Promise<{ summary: string; map: import("@/lib/frameworks/universal/types").UniversalMap; opsCount: number }> {
   const layoutHint = config.layout === "matrix"
-    ? "Aim for 2–4 items in every cell — every quadrant should be populated."
+    ? "Put 4–6 substantive items in every quadrant — every cell must feel load-bearing, not token."
     : config.layout === "kanban"
-      ? "Each column should hold 3–7 cards."
+      ? "Each column should hold 5–8 cards. Use sub-items (addCard with parentCardId) where a card has naturally nested detail."
       : config.layout === "freeform"
-        ? "Place 8–15 content cards laid out in clusters by col, using meta.x/y."
-        : "Target ~60% fill across (col, row) positions; leave cells empty where there's no genuine insight.";
+        ? "Place 12–20 content cards clustered by col, using meta.x/y. Use shape cards where the framework's identity implies one (see freeform guidance)."
+        : "Target ~80% fill across (col, row) positions. Use sub-items freely to capture nested detail. Empty cells are only acceptable when they genuinely don't exist in the domain.";
 
   const instruction = [
     preamble ?? "",
     `Topic: ${topic}`,
     "",
-    "Populate this framework with realistic, specific starter content about the topic above. Cards should be concrete and load-bearing (8–16 words each) — the kind of content a knowledgeable practitioner would write. Do NOT leave cells empty for thin reasons; use domain knowledge about the topic.",
+    "You are populating this framework as a **senior practitioner with 10+ years of hands-on experience in the topic above**. Write the cards that a subject-matter expert would write — not what a generic AI assistant would write.",
+    "",
+    "## Quality bar for every card",
+    "",
+    "- **Be specific, not surface-level.** Name real actors (roles, systems, regulations, teams), real metrics (==73% drop-off==, ==6-week turnaround==, ==$40 PMPM==), real artifacts (EOB statements, HL7 feeds, NCQA HEDIS measures, not just 'reports' / 'tools').",
+    "- **Use concrete language grounded in the topic's vocabulary.** A card about payer contracting should mention risk corridors, stop-loss, capitation rates — not generic 'negotiate terms'. A card about a login flow should name OAuth, MFA challenge, rate limiters — not 'enter credentials'.",
+    "- **Each card reveals something a reader wouldn't have guessed.** Avoid platitudes like 'stakeholders are aligned' or 'users are frustrated'. Every card should carry a non-obvious observation or fact.",
+    "- **Length 10–22 words.** Enough to be substantive, short enough to scan. Use `**bold**` for the one load-bearing phrase per card and `==highlight==` for specific numbers, named entities, or direct quotes.",
+    "- **Cover the topic broadly.** Hit the full surface area of the framework, not just the obvious corners.",
+    "",
+    "## What to avoid",
+    "",
+    "- Generic phrasing that could apply to any topic (\"needs clear communication\", \"better tooling required\").",
+    "- Empty cells when the framework position genuinely has content in the real world — use your domain knowledge.",
+    "- Card text that merely restates the col/row label.",
+    "- More than two cards per position that say the same thing in different words.",
+    "",
+    "## Layout-specific density",
+    "",
     layoutHint,
+    "",
+    "Set hero meta (persona, coreJobStatement, axis labels, etc.) via `setMapMeta` so the framework's top-level context is grounded in the topic too.",
   ]
     .filter(Boolean)
     .join("\n");

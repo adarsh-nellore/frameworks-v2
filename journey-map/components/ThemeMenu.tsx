@@ -36,6 +36,53 @@ import { triggerDownload } from "@/lib/export";
 import { ThemeUploadPanel } from "@/components/ThemeUploadPanel";
 import { ThemePreviewCard } from "@/components/ThemePreviewCard";
 
+// Apply helpers fan out over every visible board (data-map-page elements)
+// and dispatch a change event so BoardFrame's hydrator picks up any that
+// mount later. Keeps theming scoped to boards — never the app chrome.
+function applyDesignSystemEverywhere(ds: DesignSystem): void {
+  if (typeof document === "undefined") return;
+  const roots = Array.from(document.querySelectorAll<HTMLElement>("[data-map-page]"));
+  if (roots.length === 0) {
+    applyDesignSystem(ds);
+  } else {
+    for (const el of roots) applyDesignSystem(ds, el);
+  }
+  window.dispatchEvent(new CustomEvent("frameworks:theme-changed"));
+}
+
+function applyThemeEverywhere(theme: ThemeV1): void {
+  if (typeof document === "undefined") return;
+  const roots = Array.from(document.querySelectorAll<HTMLElement>("[data-map-page]"));
+  if (roots.length === 0) {
+    applyTheme(theme);
+  } else {
+    for (const el of roots) applyTheme(theme, el);
+  }
+  window.dispatchEvent(new CustomEvent("frameworks:theme-changed"));
+}
+
+function applyDesignTokensEverywhere(flat: Record<string, string> | undefined): void {
+  if (typeof document === "undefined") return;
+  const roots = Array.from(document.querySelectorAll<HTMLElement>("[data-map-page]"));
+  if (roots.length === 0) {
+    applyDesignTokenCssVars(flat);
+  } else {
+    for (const el of roots) applyDesignTokenCssVars(flat, el);
+  }
+  window.dispatchEvent(new CustomEvent("frameworks:theme-changed"));
+}
+
+function clearAppliedThemeEverywhere(): void {
+  if (typeof document === "undefined") return;
+  const roots = Array.from(document.querySelectorAll<HTMLElement>("[data-map-page]"));
+  if (roots.length === 0) {
+    clearAppliedTheme();
+  } else {
+    for (const el of roots) clearAppliedTheme(el);
+  }
+  window.dispatchEvent(new CustomEvent("frameworks:theme-changed"));
+}
+
 
 type Stage = "brand" | "upload" | "advanced";
 
@@ -210,9 +257,9 @@ export function ThemeMenu() {
   // the actual colors they picked (not DEFAULT_BRAND).
   const onApplyBrand = useCallback(() => {
     const ds = designSystemFromDerivedTheme(derivedTheme, brand);
-    applyTheme(derivedTheme);
-    applyDesignSystem(ds);
-    applyDesignTokenCssVars(undefined);
+    applyThemeEverywhere(derivedTheme);
+    applyDesignSystemEverywhere(ds);
+    applyDesignTokensEverywhere(undefined);
     saveStoredThemeJson(serializeTheme(derivedTheme));
     saveStoredDesignSystemJson(serializeDesignSystem(ds));
     saveStoredDesignTokenCssVarsJson(null);
@@ -249,8 +296,8 @@ export function ThemeMenu() {
         setPasteError(parsed.error);
         return;
       }
-      applyDesignSystem(parsed.ds);
-      applyDesignTokenCssVars(undefined);
+      applyDesignSystemEverywhere(parsed.ds);
+      applyDesignTokensEverywhere(undefined);
       saveStoredDesignSystemJson(serializeDesignSystem(parsed.ds));
       saveStoredThemeJson("");
       saveStoredDesignTokenCssVarsJson(null);
@@ -272,8 +319,8 @@ export function ThemeMenu() {
         setPasteError(parsed.error);
         return;
       }
-      applyDesignSystem(parsed.ds);
-      applyDesignTokenCssVars(undefined);
+      applyDesignSystemEverywhere(parsed.ds);
+      applyDesignTokensEverywhere(undefined);
       saveStoredDesignSystemJson(serializeDesignSystem(parsed.ds));
       saveStoredThemeJson("");
       saveStoredDesignTokenCssVarsJson(null);
@@ -285,8 +332,8 @@ export function ThemeMenu() {
       setPasteError(parsed.error);
       return;
     }
-    applyTheme(parsed.theme);
-    applyDesignTokenCssVars(parsed.designTokenCssVars);
+    applyThemeEverywhere(parsed.theme);
+    applyDesignTokensEverywhere(parsed.designTokenCssVars);
     saveStoredThemeJson(serializeTheme(parsed.theme));
     saveStoredDesignSystemJson(null);
     saveStoredDesignTokenCssVarsJson(
@@ -299,7 +346,7 @@ export function ThemeMenu() {
     clearStoredTheme();
     saveStoredDesignSystemJson(null);
     clearStoredBrand();
-    clearAppliedTheme();
+    clearAppliedThemeEverywhere();
     setOpen(false);
   }, []);
 

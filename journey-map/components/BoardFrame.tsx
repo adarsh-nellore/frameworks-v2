@@ -1,12 +1,22 @@
 "use client";
 
 import { MoreHorizontal, Trash2, Copy, GripHorizontal, Paperclip } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Board } from "@/lib/canvas/types";
 import type { AnyFrameworkModule } from "@/lib/frameworks";
 import type { UniversalMap, UniversalSelection } from "@/lib/frameworks/universal/types";
 import { PendingBoardSkeleton } from "@/components/PendingBoardSkeleton";
 import { useZoom } from "@/lib/zoom-context";
+import {
+  applyDesignSystem,
+  applyDesignTokenCssVars,
+  applyTheme,
+  loadStoredDesignSystemJson,
+  loadStoredDesignTokenCssVarsJson,
+  loadStoredThemeJson,
+  parseDesignSystem,
+  parseThemeImport,
+} from "@/lib/theme";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // BoardFrame — positioned wrapper around one Board on the canvas.
@@ -54,7 +64,43 @@ export function BoardFrame({
   const [titleFocused, setTitleFocused] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const boardRootRef = useRef<HTMLDivElement | null>(null);
   const { getScale } = useZoom();
+
+  // Scope the stored design-system / theme to THIS board's content root. This
+  // replaces the old canvas-page useLayoutEffect that applied to
+  // document.documentElement — which bled theme colors onto the copilot,
+  // topbar, and landing page. Re-runs on a `frameworks:theme-changed` event so
+  // applying a new theme updates every visible board immediately.
+  useLayoutEffect(() => {
+    function hydrate() {
+      const target = boardRootRef.current;
+      if (!target) return;
+      try {
+        const dsRaw = loadStoredDesignSystemJson();
+        if (dsRaw) {
+          const parsed = parseDesignSystem(JSON.parse(dsRaw) as unknown);
+          if (parsed.ok) applyDesignSystem(parsed.ds, target);
+        }
+        const themeRaw = loadStoredThemeJson();
+        if (themeRaw) {
+          const parsed = parseThemeImport(JSON.parse(themeRaw) as unknown);
+          if (parsed.ok) applyTheme(parsed.theme, target);
+        }
+        const extra = loadStoredDesignTokenCssVarsJson();
+        if (extra) {
+          applyDesignTokenCssVars(JSON.parse(extra) as Record<string, string>, target);
+        } else {
+          applyDesignTokenCssVars(undefined, target);
+        }
+      } catch {
+        /* stored JSON corrupt — skip */
+      }
+    }
+    hydrate();
+    window.addEventListener("frameworks:theme-changed", hydrate);
+    return () => window.removeEventListener("frameworks:theme-changed", hydrate);
+  }, [framework]);
 
   useEffect(() => {
     if (!titleFocused) setTitleDraft(board.title);
@@ -253,6 +299,7 @@ export function BoardFrame({
         <div
           data-map-page
           data-board-map-root
+          ref={boardRootRef}
           className={[
             "inline-block rounded-[28px] bg-surface",
             "px-10 py-10 md:px-12 md:py-12",
