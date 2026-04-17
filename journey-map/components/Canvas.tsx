@@ -31,10 +31,13 @@ type Props = {
 const DEFAULT_INTERACTIVE_SELECTOR =
   "[data-block],[data-row],[data-stage],[data-empty-slot],[data-row-shell],[data-floating],[data-edge-zone],[data-board-frame],[data-board-header],[data-board-map-root]";
 
-/** How aggressively a wheel turns into zoom. Smaller = gentler. */
-const ZOOM_SENSITIVITY = 0.004;
-/** Pan damping — 1.0 follows wheel exactly; <1 slows it. */
-const PAN_DAMPING = 0.9;
+/** How aggressively a wheel turns into zoom. Higher = faster. Tuned to feel
+ *  close to Figma/Miro — a single pinch or shift-scroll should cross half the
+ *  zoom range in a couple of gestures, not dozens. */
+const ZOOM_SENSITIVITY = 0.012;
+/** Pan speed multiplier on wheel/trackpad. 1.0 follows input 1:1; >1 feels
+ *  snappier on high-DPI trackpads, <1 feels sluggish. */
+const PAN_SPEED = 1.15;
 
 export function Canvas({
   children,
@@ -87,14 +90,44 @@ export function Canvas({
   // Single native wheel listener. We need it native because React's synthetic
   // wheel handler is passive by default (cannot preventDefault), and a duplicate
   // React+native pair caused a stale-closure race that made pan jitter.
+  //
+  // Performance strategy: wheel events can fire 100+ per second on modern
+  // trackpads. Every render blows through the whole board tree (cards,
+  // connectors, overlays), so committing React state per wheel event is what
+  // makes panning/zooming feel sluggish. Instead, we:
+  //   1. Update the inner div's transform DIRECTLY on every wheel event —
+  //      the canvas follows the gesture at 60/120fps regardless of render cost.
+  //   2. rAF-coalesce React state commits to ≤ once per frame, so anything
+  //      downstream (zoom %, fit-to-screen, export) still sees fresh state,
+  //      just not 120 times per second.
   useEffect(() => {
     const node = outerRef.current;
     if (!node) return;
 
+    let pendingCommit = false;
+    let pendingX = xRef.current;
+    let pendingY = yRef.current;
+    let pendingScale = scaleRef.current;
+
+    function writeTransform(x: number, y: number, s: number) {
+      const inner = innerRef.current;
+      if (!inner) return;
+      inner.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${s})`;
+    }
+    function schedule() {
+      if (pendingCommit) return;
+      pendingCommit = true;
+      requestAnimationFrame(() => {
+        pendingCommit = false;
+        setPan({ x: pendingX, y: pendingY });
+        if (pendingScale !== scaleRef.current) setScale(pendingScale);
+      });
+    }
+
     function onWheel(e: WheelEvent) {
       const outer = outerRef.current;
       if (!outer) return;
-      if (lockedRef.current) return; // locked → no preventDefault, no pan/zoom
+      if (lockedRef.current) return;
       e.preventDefault();
 
       // Cmd/Ctrl + wheel → zoom, anchored at cursor.
@@ -102,8 +135,7 @@ export function Canvas({
         const rect = outer.getBoundingClientRect();
         const cx = e.clientX - rect.left;
         const cy = e.clientY - rect.top;
-        const oldScale = scaleRef.current;
-        // Exponential mapping: smooth, sign-preserving, deltaY-magnitude-aware.
+        const oldScale = pendingCommit ? pendingScale : scaleRef.current;
         const newScale = clamp(
           oldScale * Math.exp(-e.deltaY * ZOOM_SENSITIVITY),
           MIN_SCALE,
@@ -111,24 +143,28 @@ export function Canvas({
         );
         if (newScale === oldScale) return;
         const ratio = newScale / oldScale;
-        setPan({
-          x: cx - (cx - xRef.current) * ratio,
-          y: cy - (cy - yRef.current) * ratio,
-        });
-        setScale(newScale);
+        const baseX = pendingCommit ? pendingX : xRef.current;
+        const baseY = pendingCommit ? pendingY : yRef.current;
+        pendingX = cx - (cx - baseX) * ratio;
+        pendingY = cy - (cy - baseY) * ratio;
+        pendingScale = newScale;
+        writeTransform(pendingX, pendingY, pendingScale);
+        schedule();
         return;
       }
 
-      // Plain wheel → pan. Damped so trackpad inertia isn't overwhelming.
-      setPan({
-        x: xRef.current - e.deltaX * PAN_DAMPING,
-        y: yRef.current - e.deltaY * PAN_DAMPING,
-      });
+      // Plain wheel → pan.
+      const baseX = pendingCommit ? pendingX : xRef.current;
+      const baseY = pendingCommit ? pendingY : yRef.current;
+      pendingX = baseX - e.deltaX * PAN_SPEED;
+      pendingY = baseY - e.deltaY * PAN_SPEED;
+      pendingScale = pendingCommit ? pendingScale : scaleRef.current;
+      writeTransform(pendingX, pendingY, pendingScale);
+      schedule();
     }
 
     node.addEventListener("wheel", onWheel, { passive: false });
     return () => node.removeEventListener("wheel", onWheel);
-    // Intentionally mount-once: handlers read from refs to avoid stale closures.
   }, [setPan, setScale]);
 
   const handlePointerDown = useCallback(
@@ -144,14 +180,36 @@ export function Canvas({
       const originY = yRef.current;
       setIsPanning(true);
       const node = outerRef.current;
+
+      // Drive the transform directly during the gesture so even with a heavy
+      // board tree the canvas follows the pointer at device refresh rate.
+      // React state catches up via rAF once per frame.
+      let queued = false;
+      let nextX = originX;
+      let nextY = originY;
+      const currentScale = scaleRef.current;
+      const writeTransform = (px: number, py: number) => {
+        const inner = innerRef.current;
+        if (!inner) return;
+        inner.style.transform = `translate3d(${px}px, ${py}px, 0) scale(${currentScale})`;
+      };
+      const flush = () => {
+        queued = false;
+        setPan({ x: nextX, y: nextY });
+      };
       const onMove = (ev: PointerEvent) => {
-        setPan({
-          x: originX + (ev.clientX - startX),
-          y: originY + (ev.clientY - startY),
-        });
+        nextX = originX + (ev.clientX - startX);
+        nextY = originY + (ev.clientY - startY);
+        writeTransform(nextX, nextY);
+        if (!queued) {
+          queued = true;
+          requestAnimationFrame(flush);
+        }
       };
       const onUp = () => {
         setIsPanning(false);
+        // Commit the last position even if the rAF tick hadn't fired yet.
+        if (queued) setPan({ x: nextX, y: nextY });
         node?.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onUp);
         window.removeEventListener("pointercancel", onUp);
