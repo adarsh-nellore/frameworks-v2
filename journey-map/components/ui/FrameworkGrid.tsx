@@ -329,9 +329,14 @@ export function FrameworkGrid({
 
       const pointerToLocal = (cx: number, cy: number) => {
         const rect = container.getBoundingClientRect();
+        // rect is post-transform (after the canvas stage's scale); offsetWidth
+        // is pre-transform (logical). Divide by the ratio so ghost geometry
+        // stays glued to the cursor at any zoom level.
+        const scale =
+          container.offsetWidth > 0 ? rect.width / container.offsetWidth : 1;
         return {
-          x: cx - rect.left + container.scrollLeft,
-          y: cy - rect.top + container.scrollTop,
+          x: (cx - rect.left) / scale + container.scrollLeft,
+          y: (cy - rect.top) / scale + container.scrollTop,
         };
       };
 

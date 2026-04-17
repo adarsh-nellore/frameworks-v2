@@ -170,9 +170,16 @@ export function ConnectorLayer({
       e.stopPropagation();
       const pointerToLocal = (cx: number, cy: number) => {
         const rect = root.getBoundingClientRect();
+        // The canvas stage is rendered inside a CSS `transform: scale(…)` so
+        // `rect.width` is the post-scale on-screen size while `offsetWidth` is
+        // the pre-scale logical size. Dividing by the ratio converts the
+        // pointer delta back into the SVG's internal (logical) coordinate
+        // space so the ghost tracks the cursor 1:1 at any zoom.
+        const scale =
+          root.offsetWidth > 0 ? rect.width / root.offsetWidth : 1;
         return {
-          x: cx - rect.left + root.scrollLeft,
-          y: cy - rect.top + root.scrollTop,
+          x: (cx - rect.left) / scale + root.scrollLeft,
+          y: (cy - rect.top) / scale + root.scrollTop,
         };
       };
       const start = pointerToLocal(e.clientX, e.clientY);
