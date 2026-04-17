@@ -30,7 +30,10 @@ const EMPTY_MAP: UniversalMap = {
   cards: [],
 };
 
-const ACCEPTED_EXTS = [".pdf", ".docx", ".txt", ".md", ".json", ".csv", ".tsv"];
+const ACCEPTED_EXTS = [
+  ".pdf", ".docx", ".txt", ".md", ".json", ".csv", ".tsv",
+  ".png", ".jpg", ".jpeg", ".webp", ".gif",
+];
 const ACCEPTED_ATTR = ACCEPTED_EXTS.join(",");
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 50 * 1024 * 1024;
@@ -48,7 +51,7 @@ function formatBytes(n: number): string {
 
 export default function LandingPage() {
   const router = useRouter();
-  const { addBoard, boards, startDescribe, startGenerate } = useCanvas();
+  const { addBoard, attachFileToBoard, boards, startDescribe, startGenerate } = useCanvas();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false);
   const [isNarrow, setIsNarrow] = useState(false);
@@ -132,7 +135,7 @@ export default function LandingPage() {
     setUrls((curr) => curr.filter((_, idx) => idx !== i));
   }
 
-  function handleSubmit() {
+  async function handleSubmit() {
     if (!canSubmit) return;
     setLocalError(null);
 
@@ -160,6 +163,13 @@ export default function LandingPage() {
         pendingPrompt: effectiveText,
         makeActive: true,
       });
+      // Persist attached files to the board in IDB so subsequent copilot
+      // edits keep reasoning through them without a re-upload. We still pass
+      // `files` to startDescribe in case the board state update hasn't yet
+      // propagated — context.tsx dedupes against the persistent set.
+      await Promise.all(
+        files.map((f) => attachFileToBoard(board.id, f).catch(() => null))
+      );
       void startDescribe(board.id, effectiveText, existingIds, {
         files: hasSources ? files : undefined,
         urls: effectiveUrls.length > 0 ? effectiveUrls : undefined,
@@ -171,6 +181,11 @@ export default function LandingPage() {
     const fw = listFrameworks().find((f) => f.id === selectedId);
     if (!fw) return;
 
+    // /api/generate requires at least one source (paste text, file, or URL).
+    // Without one, the server would 400 and leave the board wedged; short-
+    // circuit on the client so the user fixes it before a board is created.
+    if (!hasText && !hasSources) return;
+
     const board = addBoard({
       frameworkId: fw.id,
       customConfig: isDynamicFramework(fw.id) ? (fw.config as FrameworkConfig) : undefined,
@@ -180,6 +195,9 @@ export default function LandingPage() {
       pendingPrompt: effectiveText,
       makeActive: true,
     });
+    await Promise.all(
+      files.map((f) => attachFileToBoard(board.id, f).catch(() => null))
+    );
     void startGenerate(board.id, {
       frameworkId: fw.id,
       text: hasText ? effectiveText : undefined,
@@ -212,7 +230,7 @@ export default function LandingPage() {
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
-      handleSubmit();
+      void handleSubmit();
     }
   }
 
@@ -443,7 +461,7 @@ export default function LandingPage() {
                 )}
                 <button
                   type="button"
-                  onClick={handleSubmit}
+                  onClick={() => void handleSubmit()}
                   disabled={!canSubmit}
                   className={[
                     "inline-flex items-center justify-center h-9 w-9 rounded-full transition-colors",

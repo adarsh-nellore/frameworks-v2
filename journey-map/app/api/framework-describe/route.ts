@@ -10,6 +10,7 @@ import {
 import { buildDescribeSystemPrompt } from "@/lib/frameworks/custom/prompt";
 import { applyOps } from "@/lib/frameworks/universal";
 import { ingestSources, IngestionError, type RawInput, type IngestedSource } from "@/lib/ingestion";
+import { buildSourceContentBlocks } from "@/lib/pipeline/source-content";
 import type { FrameworkConfig } from "@/lib/frameworks/universal/config";
 import type { UniversalMap } from "@/lib/frameworks/universal/types";
 
@@ -39,9 +40,9 @@ type DescribeRes =
     }
   | { ok: false; error: string };
 
-// Truncate fetched content to this many chars before sending to Claude, so a
-// single long article or file can't blow the context budget of our synth call.
-const MAX_CONTEXT_CHARS = 24_000;
+// Sources are now passed as Anthropic content blocks (document/image/text) via
+// buildSourceContentBlocks, which applies per-block caching and preserves
+// full-fidelity PDFs and images. Long raw text is capped inside that helper.
 
 export async function POST(req: Request): Promise<Response> {
   // ── Parse (support both JSON and FormData) ─────────────────────────────────
@@ -85,12 +86,11 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   // ── Optional: fetch + extract sources ──────────────────────────────────────
-  let sourceContext = "";
+  let sources: IngestedSource[] = [];
   const warnings: string[] = [];
   if (rawInputs.length > 0) {
     try {
-      const sources = await ingestSources(rawInputs);
-      sourceContext = formatSourceContext(sources, MAX_CONTEXT_CHARS);
+      sources = await ingestSources(rawInputs);
     } catch (e) {
       // Non-fatal: continue without source context. Warn the user so they know
       // why their URL / file didn't inform the generated framework.
@@ -102,7 +102,7 @@ export async function POST(req: Request): Promise<Response> {
   // ── Call 1: synthesize config ───────────────────────────────────────────────
   let configInput: unknown;
   try {
-    configInput = await synthesizeConfig(description, sourceContext);
+    configInput = await synthesizeConfig(description, sources);
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Unknown error";
     return respond({ ok: false, error: `Synthesis failed: ${msg}` }, 502);
@@ -117,15 +117,27 @@ export async function POST(req: Request): Promise<Response> {
   }
   const config = v.config;
 
+  // Dev-time visibility: did the AI opt this framework into connectors?
+  // Printed once per describe so we can diagnose process/flow generations that
+  // come back without arrows.
+  console.log(
+    `[framework-describe] synthesized ${config.id} (${config.label}) — ` +
+      `layout=${config.layout}  connectors.enabled=${config.connectors?.enabled === true}` +
+      (config.connectors?.allowedKinds
+        ? `  kinds=[${config.connectors.allowedKinds.join(", ")}]`
+        : "")
+  );
+
   // ── Call 2: populate the seed ──────────────────────────────────────────────
   let populatedMap = config.seed;
   let populationSummary: string | undefined;
 
-  const populateInstruction = populateInstructionFor(config, sourceContext);
+  const populateInstruction = populateInstructionFor(config, sources.length > 0);
   const populateResult = await executeArrange({
     map: config.seed,
     config,
     instruction: populateInstruction,
+    sources: sources.length > 0 ? sources : undefined,
   });
 
   if (populateResult.ok) {
@@ -133,13 +145,24 @@ export async function POST(req: Request): Promise<Response> {
     if (applied.ok) {
       populatedMap = applied.map;
       populationSummary = populateResult.summary;
+      // How many addConnector ops actually landed?
+      const connectorOps = populateResult.ops.filter(
+        (o) => (o as { op?: string }).op === "addConnector"
+      ).length;
+      console.log(
+        `[framework-describe] populate ok — ${populateResult.ops.length} ops (${connectorOps} addConnector)`
+      );
     } else {
       warnings.push(
         `Populate ops couldn't apply cleanly (${applied.reason}); seed left empty.`
       );
+      console.error(
+        `[framework-describe] populate applyOps failed at index ${applied.failedAtIndex}: ${applied.reason}`
+      );
     }
   } else {
     warnings.push(`Populate step failed: ${populateResult.error}. Seed left empty.`);
+    console.error(`[framework-describe] populate step failed: ${populateResult.error}`);
   }
 
   return respond(
@@ -158,20 +181,26 @@ export async function POST(req: Request): Promise<Response> {
 // Call 1: propose_framework tool call (Claude)
 // ──────────────────────────────────────────────────────────────────────────────
 
-async function synthesizeConfig(description: string, sourceContext: string): Promise<unknown> {
+async function synthesizeConfig(
+  description: string,
+  sources: IngestedSource[]
+): Promise<unknown> {
   const anthropic = getAnthropic();
   const systemPrompt = buildDescribeSystemPrompt();
-  const userText = sourceContext
+  const hasSources = sources.length > 0;
+  const userText = hasSources
     ? `User description: ${description}
 
-Source material (use this to inform the framework choice and structure — the populate step will fill cards from this content):
-
-${sourceContext}
-
-Return a FrameworkConfig via the propose_framework tool. Design columns/rows that match the shape of the source material.`
+Use the source material attached above to inform the framework choice and structure — the populate step will fill cards from this content. Design columns/rows that match the shape of what you see. Return a FrameworkConfig via the propose_framework tool.`
     : `User description: ${description}
 
 Return a FrameworkConfig via the propose_framework tool.`;
+
+  const sourceBlocks = buildSourceContentBlocks(sources);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const userContent: any[] = hasSources
+    ? [...sourceBlocks, { type: "text", text: userText }]
+    : [{ type: "text", text: userText }];
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const createParams: any = {
@@ -190,9 +219,7 @@ Return a FrameworkConfig via the propose_framework tool.`;
       },
     ],
     tool_choice: { type: "auto" },
-    messages: [
-      { role: "user", content: [{ type: "text", text: userText }] },
-    ],
+    messages: [{ role: "user", content: userContent }],
   };
 
   const msg = await anthropic.messages.create(createParams);
@@ -208,22 +235,37 @@ Return a FrameworkConfig via the propose_framework tool.`;
 // material when present so the agent pulls specific cards from it.
 // ──────────────────────────────────────────────────────────────────────────────
 
-function populateInstructionFor(config: FrameworkConfig, sourceContext: string): string {
-  const base = sourceContext
-    ? `Populate this framework with specific content drawn from the source material below. Cards should be concrete quotes, findings, or data points from the sources (8–16 words each). Do NOT invent content — stay grounded in what the sources say.
-
-Source material:
-
-${sourceContext}
+function populateInstructionFor(config: FrameworkConfig, hasSources: boolean): string {
+  const base = hasSources
+    ? `Populate this framework with specific content drawn from the source material attached to this conversation. Cards should be concrete quotes, findings, or data points from the sources (8–16 words each). Do NOT invent content — stay grounded in what the sources say.
 
 `
     : `Populate this framework with realistic example content that a user would see as a useful starting point. Keep cards specific and concrete (8–16 words each). `;
 
+  // Connector-enabled frameworks (process maps, flowcharts, service blueprints,
+  // etc.) need arrows, not just cards. The AI has to reason about the actual
+  // causal/temporal structure of the work — which card genuinely leads to
+  // which — not just "connect adjacent cells left-to-right."
+  const connectorNudge = config.connectors?.enabled
+    ? `
+
+**This framework uses connectors — reason about them carefully.** Arrows are not decoration; they encode the actual logic of the work. Before emitting any \`addConnector\` op, think through the process:
+
+1. **Trace the real flow.** Start from the trigger (often a \`start\` or first-phase card) and follow the work as it actually happens: "When this step finishes, what happens next, and who does it?" That next card — regardless of whether it's in the same row or phase — is the target of your connector. Don't connect by visual adjacency; connect by causality.
+2. **Handoffs cross swimlanes.** If the next step is done by a different actor/system (different row), emit a \`handoff\`. If it stays in the same row, emit a \`sequence\`. A single card may hand off to multiple downstream cards in different lanes — emit one connector per real handoff.
+3. **Decisions branch on conditions.** For every card with \`meta.stepKind: "decision"\`, decide the two real outcomes (approved/denied, eligible/ineligible, success/failure, in-scope/out-of-scope) and emit \`decision-yes\` + \`decision-no\` to the two distinct downstream cards. Put the actual condition in \`label\` (e.g. \`"approved"\`, \`"over $5k"\`, \`"SLA exceeded"\`) — not just "yes"/"no" if the real label carries more information.
+4. **Loops and retries are real.** If rejection, denial, or missing-info routes work back to an earlier step, emit that backward connector. Don't force a linear left-to-right graph if the process genuinely cycles.
+5. **Parallel branches are real.** A card may fan out to multiple concurrent next steps (e.g. "approved" triggers both "provision access" and "notify requester"). Emit one connector per branch.
+6. **Coverage, not completeness.** Every non-terminal card (start/task/decision) should have at least one outgoing connector. Terminal cards (\`stepKind: "end"\`) need none. If a card has no plausible next step, mark it as \`end\`.
+
+Set \`meta.stepKind\` on cards via the \`meta\` field on \`addCard\` (\`"start" | "task" | "decision" | "end"\`) so the UI distinguishes node types. Emit connectors AFTER all cards exist so every source and target id is valid when the connector op runs.`
+    : "";
+
   if (config.layout === "matrix") {
-    return base + "Aim for 2–4 items in every cell — this is a dense grid where every (col, row) position should be filled.";
+    return base + "Aim for 2–4 items in every cell — this is a dense grid where every (col, row) position should be filled." + connectorNudge;
   }
   if (config.layout === "kanban") {
-    return base + "Each column should hold 3–7 cards. If the framework naturally has sub-items (e.g. checklist items under a goal, quotes under a theme), use sub-items via addCard with parentCardId for the nested detail.";
+    return base + "Each column should hold 3–7 cards. If the framework naturally has sub-items (e.g. checklist items under a goal, quotes under a theme), use sub-items via addCard with parentCardId for the nested detail." + connectorNudge;
   }
   if (config.layout === "freeform") {
     return (
@@ -243,24 +285,7 @@ If the framework is a loose mind-map / brainstorm without implied geometry, skip
       `.trim()
     );
   }
-  return base + "Target ~50–70% fill across (col, row) positions; leave cells empty where there is no genuine insight. Use sub-items when a card has naturally nested detail.";
-}
-
-// Concatenate ingested sources into a single context block. PDF sources are
-// skipped (they'd be binary base64 here — we don't forward them on the describe
-// path; users wanting PDF-grounded content should use /api/generate with a
-// framework selected).
-function formatSourceContext(sources: IngestedSource[], maxChars: number): string {
-  const parts: string[] = [];
-  let remaining = maxChars;
-  for (const s of sources) {
-    if (remaining <= 0) break;
-    if (s.kind === "pdf") continue;
-    const text = s.text.slice(0, remaining);
-    parts.push(`--- ${s.name} ---\n${text}`);
-    remaining -= text.length;
-  }
-  return parts.join("\n\n").trim();
+  return base + "Target ~50–70% fill across (col, row) positions; leave cells empty where there is no genuine insight. Use sub-items when a card has naturally nested detail." + connectorNudge;
 }
 
 function respond(body: DescribeRes, status: number): Response {

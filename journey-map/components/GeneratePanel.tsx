@@ -16,6 +16,7 @@ import {
   parseSseFrames,
   type GenerateEvent,
 } from "@/lib/pipeline/events";
+import type { AttachmentMeta } from "@/lib/canvas/types";
 
 type Props = {
   frameworkId: string;
@@ -30,9 +31,22 @@ type Props = {
   onProgress?: (event: GenerateEvent<any> | null) => void;
   /** Provided by the parent so the GenerationOverlay's Cancel button can also abort. */
   registerCancel?: (cancel: (() => void) | null) => void;
+  /** Persistent board attachments to show as already-attached. Persists across
+   *  generations — edits with the same docs hit Anthropic's prompt cache. */
+  boardAttachments?: AttachmentMeta[];
+  /** Persist a new file as a board attachment (IDB + board.attachments). */
+  onAttachFile?: (file: File) => Promise<void>;
+  /** Remove a persisted attachment from the board. */
+  onRemoveAttachment?: (attachmentId: string) => Promise<void>;
+  /** Rehydrate persisted attachments as File objects for FormData. Called
+   *  once per submit — the panel forwards the result to /api/generate. */
+  loadPersistedFiles?: () => Promise<File[]>;
 };
 
-const ACCEPTED_EXTS = [".pdf", ".docx", ".txt", ".md", ".json", ".csv", ".tsv"];
+const ACCEPTED_EXTS = [
+  ".pdf", ".docx", ".txt", ".md", ".json", ".csv", ".tsv",
+  ".png", ".jpg", ".jpeg", ".webp", ".gif",
+];
 const ACCEPTED_ATTR = ACCEPTED_EXTS.join(",");
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 50 * 1024 * 1024;
@@ -59,6 +73,10 @@ export function GeneratePanel({
   onBusyChange,
   onProgress,
   registerCancel,
+  boardAttachments,
+  onAttachFile,
+  onRemoveAttachment,
+  loadPersistedFiles,
 }: Props) {
   const reduce = useReducedMotion();
   const [pasted, setPasted] = useState("");
@@ -94,14 +112,17 @@ export function GeneratePanel({
     return () => registerCancel(null);
   }, [busy, registerCancel]);
 
-  const totalSize = files.reduce((s, f) => s + f.size, 0) + pasted.length;
+  const attachmentsTotal = (boardAttachments ?? []).reduce((s, a) => s + a.sizeBytes, 0);
+  const totalSize = files.reduce((s, f) => s + f.size, 0) + pasted.length + attachmentsTotal;
+  const persistentCount = boardAttachments?.length ?? 0;
   const sourcesCount =
-    (pasted.trim() ? 1 : 0) + files.length + urls.length;
+    (pasted.trim() ? 1 : 0) + files.length + urls.length + persistentCount;
   const canSubmit = !busy && sourcesCount > 0 && totalSize <= MAX_TOTAL_BYTES;
 
   function acceptFiles(incoming: FileList | File[]) {
     const next: File[] = [...files];
     let err: string | null = null;
+    const persistedNames = new Set((boardAttachments ?? []).map((a) => `${a.name}:${a.sizeBytes}`));
     for (const f of Array.from(incoming)) {
       if (!hasSupportedExt(f.name)) {
         err = `"${f.name}": unsupported type. Allowed: ${ACCEPTED_EXTS.join(", ")}`;
@@ -111,11 +132,20 @@ export function GeneratePanel({
         err = `"${f.name}" is ${formatBytes(f.size)}; max per file is ${formatBytes(MAX_FILE_BYTES)}.`;
         continue;
       }
-      // Skip duplicates (same name + size).
+      // Skip duplicates — either in local state or already persisted on the board.
       if (next.some((x) => x.name === f.name && x.size === f.size)) continue;
-      next.push(f);
+      if (persistedNames.has(`${f.name}:${f.size}`)) continue;
+      if (onAttachFile) {
+        // Persist immediately; board.attachments becomes the canonical source
+        // and the chip list renders from `boardAttachments`.
+        void onAttachFile(f).catch(() => {
+          setError(`Could not save "${f.name}" to this board.`);
+        });
+      } else {
+        next.push(f);
+      }
     }
-    setFiles(next);
+    if (!onAttachFile) setFiles(next);
     setError(err);
   }
 
@@ -165,10 +195,19 @@ export function GeneratePanel({
     abortRef.current = ac;
 
     try {
+      // Pull already-saved board attachments out of IDB so the request carries
+      // both the locally-added files and the persistent ones — deduped by
+      // name+size to avoid sending the same doc twice.
+      const persisted = loadPersistedFiles ? await loadPersistedFiles() : [];
+      const seen = new Set(persisted.map((f) => `${f.name}:${f.size}`));
+      const merged = [
+        ...persisted,
+        ...files.filter((f) => !seen.has(`${f.name}:${f.size}`)),
+      ];
       const fd = new FormData();
       fd.append("frameworkId", frameworkId);
       if (pasted.trim()) fd.append("text", pasted.trim());
-      files.forEach((f, i) => fd.append(`file_${i}`, f));
+      merged.forEach((f, i) => fd.append(`file_${i}`, f));
       urls.forEach((u, i) => fd.append(`url_${i}`, u));
       if (title.trim()) fd.append("title", title.trim());
       if (persona.trim()) fd.append("persona", persona.trim());
@@ -296,10 +335,10 @@ export function GeneratePanel({
       >
         <Upload className="h-4 w-4 text-ink-muted mb-1.5" />
         <div className="text-[12px] text-ink-secondary leading-snug">
-          Drop transcripts, personas, user stories, research notes
+          Drop transcripts, notes, mockups — saved to this board
         </div>
         <div className="mt-1 font-mono text-[9px] tracking-widest uppercase text-ink-muted">
-          .pdf .docx .txt .md .json .csv .tsv
+          .pdf .docx .txt .md .json .csv .tsv .png .jpg .webp .gif
         </div>
         <input
           ref={fileInputRef}
@@ -314,12 +353,44 @@ export function GeneratePanel({
         />
       </div>
 
-      {/* Attached files */}
-      {files.length > 0 && (
+      {/* Attached files: persistent first (IDB) then freshly-added (local). */}
+      {((boardAttachments?.length ?? 0) > 0 || files.length > 0) && (
         <div className="flex flex-wrap gap-1.5">
+          {(boardAttachments ?? []).map((a) => (
+            <motion.span
+              key={`persist-${a.id}`}
+              initial={reduce ? { opacity: 0 } : { opacity: 0, y: 3 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.18 }}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-ink-primary/[0.05] border border-ink-primary/20 px-2 py-1 text-[11px] text-ink-primary"
+              title="Saved to this board — reused on every generation"
+            >
+              <FileText className="h-3 w-3 text-ink-primary/60 shrink-0" />
+              <span className="truncate max-w-[180px]" title={a.name}>
+                {a.name}
+              </span>
+              <span className="text-ink-muted font-mono">
+                {formatBytes(a.sizeBytes)}
+              </span>
+              {onRemoveAttachment && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void onRemoveAttachment(a.id).catch(() => {});
+                  }}
+                  disabled={busy}
+                  className="text-ink-muted hover:text-rose-600 disabled:opacity-40"
+                  aria-label={`Remove ${a.name}`}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+            </motion.span>
+          ))}
           {files.map((f, i) => (
             <motion.span
-              key={`${f.name}-${i}`}
+              key={`local-${f.name}-${i}`}
               initial={reduce ? { opacity: 0 } : { opacity: 0, y: 3 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.18 }}

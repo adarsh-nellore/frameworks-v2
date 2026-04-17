@@ -92,13 +92,19 @@ Emit your extraction via the \`extract_atoms\` tool.
 
 function buildContent(source: IngestedSource): unknown[] {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const content: any[] = [
-    {
-      type: "text",
-      text: `Source label: ${source.name}\n\nRead the source ${source.kind === "pdf" ? "PDF (attached)" : "text below"} and emit atoms via the extract_atoms tool.`,
-    },
-  ];
+  const content: any[] = [];
+
+  const intro =
+    source.kind === "pdf"
+      ? `Source label: ${source.name}\n\nRead the attached PDF and emit atoms via the extract_atoms tool.`
+      : source.kind === "image"
+        ? `Source label: ${source.name}\n\nLook at the attached image and emit atoms via the extract_atoms tool — describe what you observe, any text visible, and any insights implied.`
+        : `Source label: ${source.name}\n\nRead the source text below and emit atoms via the extract_atoms tool.`;
+  content.push({ type: "text", text: intro });
+
   if (source.kind === "pdf") {
+    // Cache the PDF block — the atom extractor re-runs whenever the user edits
+    // a prompt and retriggers generation; caching keeps that cheap.
     content.push({
       type: "document",
       source: {
@@ -106,6 +112,17 @@ function buildContent(source: IngestedSource): unknown[] {
         media_type: "application/pdf",
         data: source.pdfBase64,
       },
+      cache_control: { type: "ephemeral" },
+    });
+  } else if (source.kind === "image") {
+    content.push({
+      type: "image",
+      source: {
+        type: "base64",
+        media_type: source.mediaType,
+        data: source.imageBase64,
+      },
+      cache_control: { type: "ephemeral" },
     });
   } else {
     content.push({

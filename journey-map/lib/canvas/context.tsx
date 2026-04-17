@@ -20,8 +20,15 @@ import {
   saveCustomFramework,
 } from "@/lib/frameworks/custom/registry";
 import { parseSseFrames, type GenerateEvent } from "@/lib/pipeline/events";
-import type { Board, BoardStatus, CanvasState } from "./types";
+import type { AttachmentMeta, Board, BoardStatus, CanvasState } from "./types";
 import { loadCanvasState, saveCanvasState } from "./storage";
+import {
+  deleteAllForBoard,
+  deleteAttachment,
+  genAttachmentId,
+  getAttachmentAsFile,
+  putAttachment,
+} from "./attachments-store";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // CanvasContext — state + streaming generation for the multi-board workspace.
@@ -72,6 +79,13 @@ type CanvasContextValue = CanvasState & {
   setBoardSelection: (id: string, selection: UniversalSelection | null) => void;
   setActiveBoardId: (id: string | null) => void;
 
+  /** Persist a file as an attachment on the given board. Returns the metadata
+   *  entry written to board state (useful if the caller wants to await the
+   *  id). The blob itself is stored in IndexedDB. */
+  attachFileToBoard: (boardId: string, file: File) => Promise<AttachmentMeta>;
+  /** Remove an attachment from both localStorage metadata and IDB bytes. */
+  removeAttachment: (boardId: string, attachmentId: string) => Promise<void>;
+
   /** Kick off a describe call for an existing (pending-describe) board.
    *  Optional sources are ingested server-side (URLs via Jina, files via the
    *  shared extraction pipeline) and passed to the synthesis prompt. */
@@ -114,6 +128,13 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
   const [pending, setPending] = useState<PendingGenerate | null>(null);
   const pendingAbortRef = useRef<AbortController | null>(null);
   const hydratedRef = useRef(false);
+  // Mirror of `boards` readable inside long-lived callbacks (startDescribe /
+  // startGenerate) without adding `boards` as a dep and recreating the
+  // callback every board edit.
+  const boardsRef = useRef<Board[]>(boards);
+  useEffect(() => {
+    boardsRef.current = boards;
+  }, [boards]);
 
   useEffect(() => {
     const customs = loadCustomFrameworks();
@@ -183,11 +204,17 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
   const removeBoard = useCallback((id: string) => {
     setBoards((prev) => prev.filter((b) => b.id !== id));
     setActive((curr) => (curr === id ? null : curr));
+    // Fire-and-forget: IDB cleanup shouldn't block UI removal.
+    void deleteAllForBoard(id).catch(() => {
+      /* non-fatal — orphan blobs are harmless, just slightly wasteful */
+    });
   }, []);
 
   const duplicateBoard = useCallback((id: string): Board | null => {
     const src = boards.find((b) => b.id === id);
     if (!src) return null;
+    // Drop attachments on duplicate. Copying IDB bytes for every duplicate
+    // would balloon storage; the user can re-attach to the copy if needed.
     const copy: Board = {
       ...src,
       id: genId(),
@@ -195,12 +222,63 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
       x: src.x + 80,
       y: src.y + 80,
       selection: null,
+      attachments: undefined,
       createdAt: Date.now(),
     };
     setBoards((prev) => [...prev, copy]);
     setActive(copy.id);
     return copy;
   }, [boards]);
+
+  const attachFileToBoard = useCallback(
+    async (boardId: string, file: File): Promise<AttachmentMeta> => {
+      const id = genAttachmentId();
+      const kind: AttachmentMeta["kind"] = file.type.startsWith("image/")
+        ? "image"
+        : file.type === "application/pdf" || /\.pdf$/i.test(file.name)
+          ? "pdf"
+          : "text";
+      const meta: AttachmentMeta = {
+        id,
+        name: file.name,
+        kind,
+        mediaType: file.type || fallbackMediaType(file.name),
+        sizeBytes: file.size,
+        addedAt: Date.now(),
+      };
+      await putAttachment(boardId, id, file);
+      setBoards((prev) =>
+        prev.map((b) =>
+          b.id === boardId
+            ? { ...b, attachments: [...(b.attachments ?? []), meta] }
+            : b
+        )
+      );
+      return meta;
+    },
+    []
+  );
+
+  const removeAttachment = useCallback(
+    async (boardId: string, attachmentId: string): Promise<void> => {
+      await deleteAttachment(boardId, attachmentId).catch(() => {
+        /* non-fatal */
+      });
+      setBoards((prev) =>
+        prev.map((b) =>
+          b.id === boardId
+            ? {
+                ...b,
+                attachments: (b.attachments ?? []).filter(
+                  (a) => a.id !== attachmentId
+                ),
+              }
+            : b
+        )
+      );
+    },
+    []
+  );
 
   const updateBoardMap = useCallback((id: string, map: UniversalMap) => {
     setBoards((prev) => prev.map((b) => (b.id === id ? { ...b, map } : b)));
@@ -244,17 +322,23 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
       const ac = new AbortController();
       pendingAbortRef.current = ac;
       try {
-        const hasSources =
-          (sources?.files && sources.files.length > 0) ||
-          (sources?.urls && sources.urls.length > 0);
+        // Rehydrate any attachments persisted on the board — so if the user
+        // attaches first and later re-runs describe, the saved docs feed in.
+        const persistedFiles = await loadBoardAttachmentsAsFiles(
+          boardId,
+          boardsRef.current
+        );
+        const filesAll = dedupeFiles(persistedFiles, sources?.files ?? []);
+        const urlsAll = sources?.urls ?? [];
+        const hasSources = filesAll.length > 0 || urlsAll.length > 0;
 
         let res: Response;
         if (hasSources) {
           const fd = new FormData();
           fd.append("description", description.trim());
           fd.append("existingIds", JSON.stringify(existingIds));
-          (sources?.files ?? []).forEach((f, i) => fd.append(`file_${i}`, f));
-          (sources?.urls ?? []).forEach((u, i) => fd.append(`url_${i}`, u));
+          filesAll.forEach((f, i) => fd.append(`file_${i}`, f));
+          urlsAll.forEach((u, i) => fd.append(`url_${i}`, u));
           res = await fetch("/api/framework-describe", {
             method: "POST",
             body: fd,
@@ -293,13 +377,38 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
               : b
           )
         );
-        setPending(null);
+        // Surface populate-stage warnings as a visible error on the canvas.
+        // When populate fails silently the framework shell lands but cards are
+        // empty — without this the user has no idea why.
+        const warnings = Array.isArray(data.warnings)
+          ? (data.warnings as unknown[]).filter(
+              (w): w is string => typeof w === "string"
+            )
+          : [];
+        if (warnings.length > 0) {
+          setPending({
+            boardId,
+            kind: "describe",
+            lastEvent: null,
+            error: warnings.join(" · "),
+          });
+        } else {
+          setPending(null);
+        }
       } catch (e) {
         if (e instanceof DOMException && e.name === "AbortError") {
+          // Let the user retry — releasing the placeholder board back to
+          // "ready" so /canvas stops showing the skeleton + overlay.
+          setBoards((prev) =>
+            prev.map((b) => (b.id === boardId ? { ...b, status: "ready" } : b))
+          );
           setPending(null);
           return;
         }
         const msg = e instanceof Error ? e.message : "Unknown error";
+        setBoards((prev) =>
+          prev.map((b) => (b.id === boardId ? { ...b, status: "ready" } : b))
+        );
         setPending({ boardId, kind: "describe", lastEvent: null, error: msg });
       } finally {
         pendingAbortRef.current = null;
@@ -314,10 +423,18 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
       const ac = new AbortController();
       pendingAbortRef.current = ac;
       try {
+        // Pull already-attached files out of IDB so the copilot's "regenerate"
+        // mode reasons through the board's persistent context automatically.
+        const persistedFiles = await loadBoardAttachmentsAsFiles(
+          boardId,
+          boardsRef.current
+        );
+        const allFiles = dedupeFiles(persistedFiles, input.files ?? []);
+
         const fd = new FormData();
         fd.append("frameworkId", input.frameworkId);
         if (input.text?.trim()) fd.append("text", input.text.trim());
-        (input.files ?? []).forEach((f, i) => fd.append(`file_${i}`, f));
+        allFiles.forEach((f, i) => fd.append(`file_${i}`, f));
         (input.urls ?? []).forEach((u, i) => fd.append(`url_${i}`, u));
         if (input.title?.trim()) fd.append("title", input.title.trim());
         if (input.persona?.trim()) fd.append("persona", input.persona.trim());
@@ -329,7 +446,15 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
           signal: ac.signal,
         });
         if (!res.ok || !res.body) {
-          throw new Error(`Generate failed (HTTP ${res.status})`);
+          // Non-2xx (e.g. 400 "Provide at least one source") returns JSON, not
+          // SSE. Surface the server's actual error message so the user knows
+          // what to fix instead of a generic "HTTP 400".
+          let serverMsg: string | null = null;
+          try {
+            const data = await res.json();
+            if (data && typeof data.error === "string") serverMsg = data.error;
+          } catch { /* body wasn't JSON */ }
+          throw new Error(serverMsg ?? `Generate failed (HTTP ${res.status})`);
         }
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
@@ -376,10 +501,21 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
         setPending(null);
       } catch (e) {
         if (e instanceof DOMException && e.name === "AbortError") {
+          // Abort also unwedges the board — leave it usable with whatever seed
+          // it currently holds instead of stuck at "pending-generate".
+          setBoards((prev) =>
+            prev.map((b) => (b.id === boardId ? { ...b, status: "ready" } : b))
+          );
           setPending(null);
           return;
         }
         const msg = e instanceof Error ? e.message : "Unknown error";
+        // Release the board from pending-generate so the overlay clears and
+        // the user can edit the seed / retry from the copilot. The error toast
+        // at the bottom of /canvas reads this pending.error.
+        setBoards((prev) =>
+          prev.map((b) => (b.id === boardId ? { ...b, status: "ready" } : b))
+        );
         setPending({ boardId, kind: "generate", lastEvent: null, error: msg });
       } finally {
         pendingAbortRef.current = null;
@@ -401,6 +537,8 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
       moveBoard,
       setBoardSelection,
       setActiveBoardId,
+      attachFileToBoard,
+      removeAttachment,
       startDescribe,
       startGenerate,
       cancelPending,
@@ -419,6 +557,8 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
       moveBoard,
       setBoardSelection,
       setActiveBoardId,
+      attachFileToBoard,
+      removeAttachment,
       startDescribe,
       startGenerate,
       cancelPending,
@@ -443,4 +583,72 @@ export function useActiveBoard(): Board | null {
     () => (activeBoardId ? boards.find((b) => b.id === activeBoardId) ?? null : null),
     [boards, activeBoardId]
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Last-resort content-type guesser for files that arrive without `file.type`
+ *  set (some browsers drop it for obscure extensions). Aligned with what the
+ *  server-side ingestion extractors understand. */
+function fallbackMediaType(name: string): string {
+  const ext = name.toLowerCase().split(".").pop() ?? "";
+  const map: Record<string, string> = {
+    pdf: "application/pdf",
+    png: "image/png",
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    webp: "image/webp",
+    gif: "image/gif",
+    txt: "text/plain",
+    md: "text/markdown",
+    csv: "text/csv",
+    tsv: "text/tab-separated-values",
+    json: "application/json",
+    docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    html: "text/html",
+    htm: "text/html",
+    css: "text/css",
+  };
+  return map[ext] ?? "application/octet-stream";
+}
+
+/** Merge two File lists, dropping duplicates keyed by name + size. Guards
+ *  against the momentary race where `attachFileToBoard` has committed to IDB
+ *  but React hasn't yet propagated the `boards` state update into boardsRef,
+ *  so the caller also re-passes the fresh files. */
+function dedupeFiles(primary: File[], secondary: File[]): File[] {
+  const seen = new Set(primary.map((f) => `${f.name}:${f.size}`));
+  const out = [...primary];
+  for (const f of secondary) {
+    const key = `${f.name}:${f.size}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(f);
+  }
+  return out;
+}
+
+/** Reconstruct File objects for every attachment a board has persisted. Used
+ *  on each describe/generate call so the agent always reasons through the
+ *  full board context — not just freshly-added files. Failures on a single
+ *  attachment (e.g. blob purged from IDB) degrade gracefully: skip it. */
+async function loadBoardAttachmentsAsFiles(
+  boardId: string,
+  boards: Board[]
+): Promise<File[]> {
+  const board = boards.find((b) => b.id === boardId);
+  const metas = board?.attachments ?? [];
+  if (metas.length === 0) return [];
+  const out: File[] = [];
+  for (const meta of metas) {
+    try {
+      const file = await getAttachmentAsFile(boardId, meta.id, meta.name, meta.mediaType);
+      if (file) out.push(file);
+    } catch {
+      /* IDB unavailable or blob missing — skip */
+    }
+  }
+  return out;
 }

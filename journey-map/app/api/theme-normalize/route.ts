@@ -61,6 +61,11 @@ function buildUserContent(sources: IngestedSource[]): unknown[] {
         { type: "text", text: `\n--- ${s.name} (PDF) ---` },
         { type: "document", source: { type: "base64", media_type: "application/pdf", data: s.pdfBase64 } }
       );
+    } else if (s.kind === "image") {
+      content.push(
+        { type: "text", text: `\n--- ${s.name} (image) ---` },
+        { type: "image", source: { type: "base64", media_type: s.mediaType, data: s.imageBase64 } }
+      );
     } else {
       content.push({ type: "text", text: `\n--- ${s.name} ---\n${s.text}` });
     }

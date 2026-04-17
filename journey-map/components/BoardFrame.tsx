@@ -1,6 +1,6 @@
 "use client";
 
-import { MoreHorizontal, Trash2, Copy, GripHorizontal } from "lucide-react";
+import { MoreHorizontal, Trash2, Copy, GripHorizontal, Paperclip } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { Board } from "@/lib/canvas/types";
 import type { AnyFrameworkModule } from "@/lib/frameworks";
@@ -143,6 +143,18 @@ export function BoardFrame({
           >
             <GripHorizontal className="h-3.5 w-3.5" />
           </button>
+        )}
+        {board.attachments && board.attachments.length > 0 && (
+          <span
+            data-floating
+            className="inline-flex items-center gap-1 rounded-md bg-ink-primary/[0.06] text-ink-secondary px-1.5 py-0.5 shrink-0"
+            title={board.attachments.map((a) => a.name).join("\n")}
+          >
+            <Paperclip className="h-3 w-3" />
+            <span className="text-[10px] font-mono tabular-nums">
+              {board.attachments.length}
+            </span>
+          </span>
         )}
         <input
           type="text"

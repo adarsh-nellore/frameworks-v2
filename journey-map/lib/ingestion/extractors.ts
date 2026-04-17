@@ -24,7 +24,24 @@ export const SUPPORTED_EXTENSIONS = [
   // through as plain text — Claude can interpret the columns from the header
   // row, and the structuring prompt tells it how to build a framework on top.
   "csv", "tsv",
+  // Images feed Anthropic vision. Mockups, whiteboard photos, screenshots, etc.
+  "png", "jpg", "jpeg", "webp", "gif",
 ] as const;
+
+/** Anthropic's supported vision MIME types, keyed by file extension. */
+const IMAGE_MIME_BY_EXT: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  webp: "image/webp",
+  gif: "image/gif",
+};
+
+function estImageTokens(): number {
+  // Anthropic guidance: ~1.15–1.6k tokens per typical image after resize.
+  // Use a conservative fixed estimate — we size images before upload.
+  return 1500;
+}
 
 export async function extractPdf(file: File): Promise<IngestedSource> {
   const buf = Buffer.from(await file.arrayBuffer());
@@ -34,6 +51,24 @@ export async function extractPdf(file: File): Promise<IngestedSource> {
     name: file.name,
     pdfBase64,
     estTokens: estPdfTokens(buf.length),
+  };
+}
+
+export async function extractImage(file: File): Promise<IngestedSource> {
+  const ext = extensionOf(file.name);
+  const mediaType = IMAGE_MIME_BY_EXT[ext];
+  if (!mediaType) {
+    throw new IngestionError(
+      `Unsupported image type ".${ext}". Allowed: ${Object.keys(IMAGE_MIME_BY_EXT).map((e) => "." + e).join(", ")}`
+    );
+  }
+  const buf = Buffer.from(await file.arrayBuffer());
+  return {
+    kind: "image",
+    name: file.name,
+    imageBase64: buf.toString("base64"),
+    mediaType,
+    estTokens: estImageTokens(),
   };
 }
 
@@ -201,6 +236,12 @@ export async function extractFile(file: File): Promise<IngestedSource> {
     case "html":
     case "htm":
       return extractHtml(file);
+    case "png":
+    case "jpg":
+    case "jpeg":
+    case "webp":
+    case "gif":
+      return extractImage(file);
     default:
       throw new IngestionError(
         `Unsupported file type ".${ext}". Allowed: ${SUPPORTED_EXTENSIONS.map((e) => "." + e).join(", ")}`

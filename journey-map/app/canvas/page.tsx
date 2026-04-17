@@ -31,6 +31,7 @@ import type { FrameworkConfig } from "@/lib/frameworks/universal/config";
 import type { UniversalMap } from "@/lib/frameworks/universal/types";
 import { ZoomProvider, useZoom } from "@/lib/zoom-context";
 import { useCanvas, useActiveBoard } from "@/lib/canvas/context";
+import { getAttachmentAsFile } from "@/lib/canvas/attachments-store";
 import type { Board } from "@/lib/canvas/types";
 
 export default function CanvasPage() {
@@ -55,6 +56,8 @@ function CanvasPageInner() {
     moveBoard,
     setBoardSelection,
     setActiveBoardId,
+    attachFileToBoard,
+    removeAttachment,
     pending,
     cancelPending,
   } = useCanvas();
@@ -362,6 +365,22 @@ function CanvasPageInner() {
             onFocusClear={() => setBoardSelection(activeBoard.id, null)}
             onGenerationProgress={setGeneration}
             registerGenerationCancel={registerCancel}
+            boardAttachments={activeBoard.attachments ?? []}
+            onAttachFile={(f) => attachFileToBoard(activeBoard.id, f).then(() => {})}
+            onRemoveAttachment={(id) => removeAttachment(activeBoard.id, id)}
+            loadPersistedFiles={async () => {
+              const metas = activeBoard.attachments ?? [];
+              const out: File[] = [];
+              for (const m of metas) {
+                try {
+                  const f = await getAttachmentAsFile(activeBoard.id, m.id, m.name, m.mediaType);
+                  if (f) out.push(f);
+                } catch {
+                  /* skip missing / unreadable */
+                }
+              }
+              return out;
+            }}
           />
         </>
       )}

@@ -11,6 +11,26 @@ export type BoardStatus =
    *  frameworkId/map are the framework's seed; canvas overlays progress. */
   | "pending-generate";
 
+/**
+ * Metadata for one attachment persisted on a board. The blob itself lives in
+ * IndexedDB (see lib/canvas/attachments-store) keyed by `${boardId}:${id}` —
+ * only this metadata roundtrips through localStorage, so the state blob stays
+ * small even when a board has a 10 MB PDF attached.
+ */
+export type AttachmentMeta = {
+  id: string;
+  name: string;
+  /** "pdf" / "image" go to Anthropic as document/image content blocks; "text"
+   *  covers everything else the ingestion layer normalizes to plain text
+   *  (txt, md, docx, csv, tsv, json, html, css, url). */
+  kind: "pdf" | "image" | "text";
+  /** MIME type of the stored blob. Used to pick the right Anthropic content
+   *  block (e.g. image/png vs image/jpeg) and to reconstruct a File on upload. */
+  mediaType: string;
+  sizeBytes: number;
+  addedAt: number;
+};
+
 export type Board = {
   id: string;
   frameworkId: string;
@@ -26,6 +46,8 @@ export type Board = {
   status: BoardStatus;
   /** For pending-describe: the user's original prompt, shown in the skeleton. */
   pendingPrompt?: string;
+  /** Per-board attachments the agent reasons through on describe / generate. */
+  attachments?: AttachmentMeta[];
   createdAt: number;
 };
 

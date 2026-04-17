@@ -12,6 +12,7 @@ import { GeneratePanel } from "@/components/GeneratePanel";
 import type { GenerateEvent } from "@/lib/pipeline/events";
 import type { UniversalMap } from "@/lib/frameworks/universal/types";
 import type { FrameworkConfig } from "@/lib/frameworks/universal/config";
+import type { AttachmentMeta } from "@/lib/canvas/types";
 
 type Props = {
   frameworkId: string;
@@ -43,6 +44,14 @@ type Props = {
   onGenerationProgress?: (event: GenerateEvent<any> | null) => void;
   /** Receive a cancel function whenever generation is in flight. */
   registerGenerationCancel?: (cancel: (() => void) | null) => void;
+  /** Persistent attachments on the active board, shown in generate mode. */
+  boardAttachments?: AttachmentMeta[];
+  /** Persist a dropped file as a board attachment (IDB + meta on Board). */
+  onAttachFile?: (file: File) => Promise<void>;
+  /** Remove a persisted attachment. */
+  onRemoveAttachment?: (attachmentId: string) => Promise<void>;
+  /** Rehydrate persisted attachments as File[] for a generate submit. */
+  loadPersistedFiles?: () => Promise<File[]>;
 };
 
 type CopilotMode = "chat" | "generate";
@@ -122,6 +131,10 @@ export function Copilot({
   onFocusClear,
   onGenerationProgress,
   registerGenerationCancel,
+  boardAttachments,
+  onAttachFile,
+  onRemoveAttachment,
+  loadPersistedFiles,
 }: Props) {
   const reduce = useReducedMotion();
   const [busy, setBusy] = useState(false);
@@ -332,6 +345,10 @@ export function Copilot({
           onBusyChange={setBusyBoth}
           onProgress={onGenerationProgress}
           registerCancel={registerGenerationCancel}
+          boardAttachments={boardAttachments}
+          onAttachFile={onAttachFile}
+          onRemoveAttachment={onRemoveAttachment}
+          loadPersistedFiles={loadPersistedFiles}
         />
       ) : (
         <Fragment>

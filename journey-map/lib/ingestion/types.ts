@@ -18,6 +18,15 @@ export type IngestedSource =
       name: string;
       pdfBase64: string;
       estTokens: number;
+    }
+  | {
+      kind: "image";
+      name: string;
+      imageBase64: string;
+      /** MIME type — must be one Anthropic vision supports:
+       *  image/png, image/jpeg, image/webp, image/gif. */
+      mediaType: string;
+      estTokens: number;
     };
 
 export type IngestionLimits = {
