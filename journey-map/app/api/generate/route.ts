@@ -2,6 +2,7 @@ import { getFramework } from "@/lib/frameworks";
 import {
   ingestSources,
   IngestionError,
+  type IngestedSource,
   type RawInput,
 } from "@/lib/ingestion";
 import {
@@ -11,6 +12,8 @@ import {
 } from "@/lib/pipeline/events";
 import { extractAtomsFromSource, type SourceAtoms } from "@/lib/pipeline/extract-atoms";
 import { structureMap } from "@/lib/pipeline/structure";
+import { executeArrange } from "@/lib/frameworks/arrange-execute";
+import { applyOps } from "@/lib/frameworks/universal";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -157,6 +160,35 @@ export async function POST(req: Request) {
         }
         emit({ phase: "ingesting", sourcesCount: sources.length });
 
+        // Topic-prompt fast path: when the only input is a short paste — e.g.
+        // the user typed "Kaiser Permanente" and picked a framework — there's
+        // no research material to atomize, and atom extraction will rightly
+        // decline to emit a tool call. Populate the framework's seed directly
+        // via executeArrange instead, so the user always gets a populated
+        // board from a topic prompt. Files, URLs, and longer pastes still go
+        // through the atom-extraction path below.
+        if (isTopicPrompt(sources)) {
+          emit({ phase: "synthesizing" });
+          const topic = (sources[0] as { text: string }).text.trim();
+          const topicResult = await runTopicPopulate(framework.config, topic, parsed.preamble);
+          emit({
+            phase: "result",
+            summary: topicResult.summary,
+            map: topicResult.map,
+            debug: {
+              mode: "two-pass",
+              sourcesCount: 1,
+              digestsCount: 0,
+              opsCount: topicResult.opsCount,
+              fidelityMode: parsed.fidelityMode,
+              critiqueRan: false,
+              revisionRan: false,
+            },
+          });
+          controller.close();
+          return;
+        }
+
         // ── Stage 1: Universal Atom Extraction (parallel per source) ──────────
         const atomResults: SourceAtoms[] = [];
         for (let i = 0; i < sources.length; i++) {
@@ -180,8 +212,34 @@ export async function POST(req: Request) {
             );
           }
         }
+        // If atom extraction yielded nothing from every source, fall back to
+        // the topic-populate path so the user still gets a usable board
+        // instead of a hard error.
         if (atomResults.length === 0) {
-          throw new Error("All atom extractions failed");
+          console.warn("[generate] atom extraction returned nothing — falling back to topic populate");
+          emit({ phase: "synthesizing" });
+          const topicish = sourcesAsTopic(sources);
+          const topicResult = await runTopicPopulate(
+            framework.config,
+            topicish,
+            parsed.preamble
+          );
+          emit({
+            phase: "result",
+            summary: topicResult.summary,
+            map: topicResult.map,
+            debug: {
+              mode: "two-pass",
+              sourcesCount: sources.length,
+              digestsCount: 0,
+              opsCount: topicResult.opsCount,
+              fidelityMode: parsed.fidelityMode,
+              critiqueRan: false,
+              revisionRan: false,
+            },
+          });
+          controller.close();
+          return;
         }
 
         const totalAtoms = atomResults.reduce((s, x) => s + x.atoms.length, 0);
@@ -230,4 +288,80 @@ export async function POST(req: Request) {
       connection: "keep-alive",
     },
   });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Topic-prompt support
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Recognise a single-paste, short-text input as a topic prompt rather than
+ *  research material to atomize. Threshold is generous (≤ 600 chars) so a
+ *  short brief like "Kaiser Permanente member enrollment" still populates the
+ *  seed sensibly, but a pasted interview transcript still goes through atom
+ *  extraction. */
+function isTopicPrompt(sources: IngestedSource[]): boolean {
+  if (sources.length !== 1) return false;
+  const only = sources[0];
+  if (only.kind !== "text") return false;
+  return only.text.trim().length <= 600;
+}
+
+/** Join thin sources into a single topic brief, for the fallback path when
+ *  atom extraction produced nothing useful. */
+function sourcesAsTopic(sources: IngestedSource[]): string {
+  const parts: string[] = [];
+  for (const s of sources) {
+    if (s.kind === "text") parts.push(s.text.trim());
+    else if (s.kind === "pdf") parts.push(`(Source: ${s.name} — PDF)`);
+    else if (s.kind === "image") parts.push(`(Source: ${s.name} — image)`);
+  }
+  return parts.filter(Boolean).join("\n\n").slice(0, 2000);
+}
+
+/** Populate a framework's seed from a topic brief using executeArrange. Used
+ *  when there's no substantive source material to atomize — the agent treats
+ *  the topic as the subject and fills the seed with plausible starter content
+ *  grounded in that topic. */
+async function runTopicPopulate(
+  config: import("@/lib/frameworks/universal/config").FrameworkConfig,
+  topic: string,
+  preamble: string | null
+): Promise<{ summary: string; map: import("@/lib/frameworks/universal/types").UniversalMap; opsCount: number }> {
+  const layoutHint = config.layout === "matrix"
+    ? "Aim for 2–4 items in every cell — every quadrant should be populated."
+    : config.layout === "kanban"
+      ? "Each column should hold 3–7 cards."
+      : config.layout === "freeform"
+        ? "Place 8–15 content cards laid out in clusters by col, using meta.x/y."
+        : "Target ~60% fill across (col, row) positions; leave cells empty where there's no genuine insight.";
+
+  const instruction = [
+    preamble ?? "",
+    `Topic: ${topic}`,
+    "",
+    "Populate this framework with realistic, specific starter content about the topic above. Cards should be concrete and load-bearing (8–16 words each) — the kind of content a knowledgeable practitioner would write. Do NOT leave cells empty for thin reasons; use domain knowledge about the topic.",
+    layoutHint,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const result = await executeArrange({
+    map: config.seed,
+    config,
+    instruction,
+  });
+  if (!result.ok) {
+    throw new Error(`Topic populate failed: ${result.error}`);
+  }
+  const applied = applyOps(config.seed, result.ops);
+  if (!applied.ok) {
+    throw new Error(
+      `Topic populate ops failed at index ${applied.failedAtIndex}: ${applied.reason}`
+    );
+  }
+  return {
+    summary: result.summary,
+    map: applied.map,
+    opsCount: result.ops.length,
+  };
 }
