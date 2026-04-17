@@ -66,8 +66,12 @@ const NEUTRAL_COLORS = {
   tintBg: "bg-surface",
   chipBg: "bg-ink-primary/[0.06]",
   chipText: "text-ink-secondary",
-  highlightBg: "bg-[rgb(var(--accent)/0.14)]",
-  highlightText: "text-ink-primary",
+  // Highlight marker intentionally does NOT track the brand accent so that
+  // uploading a design system recolors the card chrome (headers, selection
+  // rings, stripes) without repainting inline text highlights. Tokens live
+  // in globals.css — `--highlight-mark-bg` / `--highlight-mark-text`.
+  highlightBg: "bg-[rgb(var(--highlight-mark-bg)/0.65)]",
+  highlightText: "text-[rgb(var(--highlight-mark-text))]",
 } as const;
 
 // Per-kind icon only. Colors are uniform across all kinds.

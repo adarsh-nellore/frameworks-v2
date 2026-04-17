@@ -31,6 +31,12 @@
      import. Defaults to an indigo kin to the journey-map stakeholders lane. */
   --accent: 79 70 229;
 
+  /* Highlight marker (==phrase==) — deliberately DECOUPLED from --accent so
+     uploading a brand palette doesn't repaint the text highlights inside
+     cards. A physical-marker warm yellow reads the same across every theme. */
+  --highlight-mark-bg: 253 224 71;     /* amber-300 */
+  --highlight-mark-text: 66 32 6;      /* deep amber ink — readable on yellow */
+
   /* Corner radii (overridable by design system import) */
   --radius-sm: 6px;
   --radius-md: 10px;

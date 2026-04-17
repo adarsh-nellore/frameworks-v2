@@ -84,11 +84,14 @@ export function ColHeader({
         className={[
           "px-3.5 py-2.5 rounded-lg flex items-center gap-2.5 min-h-[40px]",
           "transition-[background-color,border-color,box-shadow] duration-150 border",
+          // At-rest uses a faint accent left-border so the imported brand
+          // color actually appears on every column header — not just on
+          // selection. Matches how a printed poster signals structure.
           isSelected
             ? "bg-accent text-white border-accent shadow-card"
             : isSubject
               ? "bg-accent/[0.08] border-accent/40 hover:border-accent/60"
-              : "bg-surface border-border-soft hover:border-border-medium",
+              : "bg-surface border-border-soft hover:border-border-medium border-l-[3px] border-l-accent/70",
         ].join(" ")}
       >
         {Icon ? (
@@ -103,7 +106,9 @@ export function ColHeader({
           <span
             className={[
               "font-mono text-[10px] tabular-nums tracking-[0.18em] shrink-0",
-              isSelected ? "text-white/60" : "text-ink-muted",
+              // Step badge carries the brand color at rest so the accent
+              // shows even when nothing is selected.
+              isSelected ? "text-white/60" : "text-[rgb(var(--accent))]/80",
             ].join(" ")}
           >
             {stepLabel}
