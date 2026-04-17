@@ -118,10 +118,13 @@ function CanvasPageInner() {
     return () => window.removeEventListener("resize", onResize);
   }, [fitAll]);
 
-  // Keyboard shortcuts at the workspace level.
-  //  - Escape deactivates the current board (Miro/Figma parity).
-  //  - Delete/Backspace removes selected cards from the active board.
-  // Skipped while a text input owns focus so we don't eat keystrokes.
+  // Keyboard shortcuts at the workspace level — one place, works across every
+  // framework layout (grid / kanban / matrix / freeform). The hierarchy is:
+  //   Cards ⊂ rows/cols ⊂ boards ⊂ canvas.
+  // Each shortcut dispatches to the finest-grained active level — if a card
+  // is selected, Cmd+D duplicates the card; no card but a row/col selected,
+  // it duplicates the row/col; neither but an active board, it duplicates
+  // the whole board.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const tag = (e.target as HTMLElement)?.tagName;
@@ -133,6 +136,69 @@ function CanvasPageInner() {
         return;
       }
 
+      // Cmd/Ctrl+D — duplicate at the finest active level.
+      if ((e.metaKey || e.ctrlKey) && (e.key === "d" || e.key === "D")) {
+        if (!activeBoard || !activeFramework) return;
+        const sel = activeBoard.selection as
+          | { type: "cards"; ids: string[] }
+          | { type: "col"; id: string }
+          | { type: "row"; id: string }
+          | null;
+        e.preventDefault();
+        if (sel?.type === "cards" && sel.ids.length > 0) {
+          type AnyOp = { op: string; [k: string]: unknown };
+          const ops: AnyOp[] = [];
+          for (const id of sel.ids) {
+            const card = activeBoard.map.cards.find((c) => c.id === id);
+            if (!card) continue;
+            ops.push({
+              op: "addCard",
+              colId: card.colId,
+              rowId: card.rowId,
+              text: card.text,
+              meta: card.meta ? { ...card.meta } : undefined,
+            });
+          }
+          if (ops.length === 0) return;
+          const result = activeFramework.applyOps(activeBoard.map, ops as never);
+          if (result.ok) updateBoardMap(activeBoard.id, result.map);
+          return;
+        }
+        if (sel?.type === "col") {
+          const col = activeBoard.map.cols.find((c) => c.id === sel.id);
+          if (!col) return;
+          const idx = activeBoard.map.cols.findIndex((c) => c.id === sel.id);
+          const result = activeFramework.applyOps(activeBoard.map, [
+            {
+              op: "addCol",
+              label: `${col.label} copy`,
+              kind: col.kind,
+              atIndex: idx + 1,
+            },
+          ] as never);
+          if (result.ok) updateBoardMap(activeBoard.id, result.map);
+          return;
+        }
+        if (sel?.type === "row") {
+          const row = activeBoard.map.rows.find((r) => r.id === sel.id);
+          if (!row) return;
+          const idx = activeBoard.map.rows.findIndex((r) => r.id === sel.id);
+          const result = activeFramework.applyOps(activeBoard.map, [
+            {
+              op: "addRow",
+              label: `${row.label} copy`,
+              kind: row.kind,
+              atIndex: idx + 1,
+            },
+          ] as never);
+          if (result.ok) updateBoardMap(activeBoard.id, result.map);
+          return;
+        }
+        // Nothing finer-grained selected — duplicate the whole board.
+        duplicateBoard(activeBoard.id);
+        return;
+      }
+
       if (e.key === "Delete" || e.key === "Backspace") {
         if (!activeBoard || !activeFramework) return;
         const sel = activeBoard.selection as
@@ -140,25 +206,43 @@ function CanvasPageInner() {
           | { type: "col"; id: string }
           | { type: "row"; id: string }
           | null;
-        if (!sel) return;
-        e.preventDefault();
-        type AnyOp = { op: string; [k: string]: unknown };
-        const ops: AnyOp[] =
-          sel.type === "cards"
-            ? sel.ids.map((id) => ({ op: "removeCard", cardId: id }))
-            : sel.type === "col"
-              ? [{ op: "removeCol", colId: sel.id }]
-              : [{ op: "removeRow", rowId: sel.id }];
-        const result = activeFramework.applyOps(activeBoard.map, ops as never);
-        if (result.ok) {
-          updateBoardMap(activeBoard.id, result.map);
-          setBoardSelection(activeBoard.id, null);
+        if (sel) {
+          e.preventDefault();
+          type AnyOp = { op: string; [k: string]: unknown };
+          const ops: AnyOp[] =
+            sel.type === "cards"
+              ? sel.ids.map((id) => ({ op: "removeCard", cardId: id }))
+              : sel.type === "col"
+                ? [{ op: "removeCol", colId: sel.id }]
+                : [{ op: "removeRow", rowId: sel.id }];
+          const result = activeFramework.applyOps(activeBoard.map, ops as never);
+          if (result.ok) {
+            updateBoardMap(activeBoard.id, result.map);
+            setBoardSelection(activeBoard.id, null);
+          }
+          return;
+        }
+        // No selection but Cmd/Ctrl+Delete on an active board removes it.
+        // Plain Delete without selection is a no-op — prevents accidental
+        // board nuking while panning around.
+        if ((e.metaKey || e.ctrlKey) && activeBoard) {
+          e.preventDefault();
+          removeBoard(activeBoard.id);
         }
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [activeBoardId, activeBoard, activeFramework, setActiveBoardId, updateBoardMap, setBoardSelection]);
+  }, [
+    activeBoardId,
+    activeBoard,
+    activeFramework,
+    setActiveBoardId,
+    updateBoardMap,
+    setBoardSelection,
+    duplicateBoard,
+    removeBoard,
+  ]);
 
   // Theme hydration lives on each BoardFrame now (see hydrateBoardTheme in
   // BoardFrame.tsx). Applying to document.documentElement here would re-paint

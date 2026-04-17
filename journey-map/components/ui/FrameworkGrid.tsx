@@ -100,7 +100,12 @@ export function FrameworkGrid({
   // an addConnector op or cancels if the pointer isn't over a target card.
   const cardsContainerRef = useRef<HTMLDivElement | null>(null);
   const [connectorDraft, setConnectorDraft] = useState<ConnectorDraft | null>(null);
-  const connectorsEnabled = !!config.connectors?.enabled;
+  // Connectors are ON by default across every framework. A framework can opt
+  // OUT by setting `config.connectors.enabled = false` (e.g. if we ever ship
+  // a layout where arrows would read as noise). The AI side remains opt-in
+  // via `=== true` — it should only auto-emit connectors when the config
+  // genuinely calls for them. Users can still draw them by hand anywhere.
+  const connectorsEnabled = config.connectors?.enabled !== false;
 
   function commitOps(ops: Op[]) {
     const result = applyOps(map, ops);
@@ -506,6 +511,28 @@ export function FrameworkGrid({
                 selectedConnectorIds={selectedConnectorIds}
                 onConnectorClick={selectConnector}
                 draft={connectorDraft}
+                onReassignEndpoint={(connectorId, end, newCardId) => {
+                  // Don't create a self-loop if the user drops onto the other
+                  // endpoint's card; ignore the attempt and keep the connector
+                  // as-is.
+                  const conn = (map.connectors ?? []).find(
+                    (c) => c.id === connectorId
+                  );
+                  if (!conn) return;
+                  const otherCardId =
+                    end === "source" ? conn.targetCardId : conn.sourceCardId;
+                  if (newCardId === otherCardId) return;
+                  // Also clear the anchor on the moved end so the auto-anchor
+                  // picks the shortest side on the new card. An explicit anchor
+                  // set against the old card rarely makes sense on the new one.
+                  const patch =
+                    end === "source"
+                      ? { sourceCardId: newCardId, sourceAnchor: undefined }
+                      : { targetCardId: newCardId, targetAnchor: undefined };
+                  commitOps([
+                    { op: "updateConnector", connectorId, patch },
+                  ]);
+                }}
               />
             )}
           </div>
@@ -586,7 +613,7 @@ function GridLayout(p: LayoutProps) {
               kind="col-handle"
               payloadId={col.id}
               agentBusy={agentBusy || !!config.fixedCols}
-              className="shrink-0"
+              className="shrink-0 cursor-grab active:cursor-grabbing"
             >
               <div style={{ width: CARD_W }}>
                 <ColHeader
@@ -639,6 +666,7 @@ function GridLayout(p: LayoutProps) {
                   kind="row-handle"
                   payloadId={row.id}
                   agentBusy={agentBusy || !!config.fixedRows}
+                  className="cursor-grab active:cursor-grabbing"
                 >
                   <RowLabelRail
                     label={row.label}
@@ -857,9 +885,12 @@ function KanbanLayout(p: LayoutProps) {
               kind="col-handle"
               payloadId={col.id}
               agentBusy={agentBusy || !!config.fixedCols}
-              className="shrink-0 self-start snap-start"
+              className="shrink-0 self-start snap-start cursor-grab active:cursor-grabbing"
             >
-              <div style={{ width: KANBAN_COL_W }}>
+              <div
+                style={{ width: KANBAN_COL_W }}
+                onContextMenu={(e) => p.onColContextMenu(e, col.id)}
+              >
                 <SectionContainer kind={effectiveKind}>
               {/* Sticky header inside the section so it stays put as cards scroll */}
               <div className="sticky top-0 z-10 -mx-3 -mt-3 px-3 pt-3 pb-2 rounded-t-2xl bg-gradient-to-b from-surface/95 to-surface/70 backdrop-blur">
@@ -1003,7 +1034,7 @@ function MatrixLayout(p: LayoutProps) {
               kind="col-handle"
               payloadId={col.id}
               agentBusy={agentBusy || !!config.fixedCols}
-              className="flex-1"
+              className="flex-1 cursor-grab active:cursor-grabbing"
               style={cellMinWStyle}
             >
               <ColHeader
@@ -1062,6 +1093,7 @@ function MatrixLayout(p: LayoutProps) {
                 kind="row-handle"
                 payloadId={row.id}
                 agentBusy={agentBusy || !!config.fixedRows}
+                className="cursor-grab active:cursor-grabbing"
               >
                 <RowLabelRail
                   label={row.label}
@@ -1086,7 +1118,12 @@ function MatrixLayout(p: LayoutProps) {
                 const cards = cardsByPos[`${col.id}:${row.id}`] ?? [];
                 const isSubjectCol = col.kind === "subject";
                 return (
-                  <div key={col.id} className="flex-1" style={cellMinWStyle}>
+                  <div
+                    key={col.id}
+                    className="flex-1"
+                    style={cellMinWStyle}
+                    onContextMenu={(e) => p.onColContextMenu(e, col.id)}
+                  >
                     <SectionContainer
                       kind={isSubjectCol ? "subject" : (row.kind ?? "neutral")}
                       emphasized={isSubjectCol}

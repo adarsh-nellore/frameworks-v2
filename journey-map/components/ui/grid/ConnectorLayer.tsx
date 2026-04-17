@@ -130,6 +130,13 @@ type Props = {
   onConnectorClick?: (id: string, additive: boolean) => void;
   /** Live-drawing ghost during drag-to-connect. */
   draft?: ConnectorDraft | null;
+  /** Called when a user drags a selected connector's endpoint onto a new
+   *  card. Receives which end was moved and the id of the new endpoint card. */
+  onReassignEndpoint?: (
+    connectorId: string,
+    end: "source" | "target",
+    newCardId: string
+  ) => void;
 };
 
 export function ConnectorLayer({
@@ -140,10 +147,73 @@ export function ConnectorLayer({
   selectedConnectorIds,
   onConnectorClick,
   draft,
+  onReassignEndpoint,
 }: Props) {
   const [boxes, setBoxes] = useState<Map<string, Box>>(() => new Map());
   const [size, setSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
   const rafRef = useRef<number | null>(null);
+  // Ghost while the user is dragging one endpoint of an existing connector to
+  // a new card. Holds the connector id, which end is moving, and the live
+  // pointer position in container-local coords.
+  const [endpointDrag, setEndpointDrag] = useState<{
+    connectorId: string;
+    end: "source" | "target";
+    x: number;
+    y: number;
+  } | null>(null);
+
+  const beginEndpointDrag = useCallback(
+    (connectorId: string, end: "source" | "target", e: React.PointerEvent) => {
+      const root = containerRef.current;
+      if (!root) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const pointerToLocal = (cx: number, cy: number) => {
+        const rect = root.getBoundingClientRect();
+        return {
+          x: cx - rect.left + root.scrollLeft,
+          y: cy - rect.top + root.scrollTop,
+        };
+      };
+      const start = pointerToLocal(e.clientX, e.clientY);
+      setEndpointDrag({ connectorId, end, x: start.x, y: start.y });
+
+      const onMove = (ev: PointerEvent) => {
+        const p = pointerToLocal(ev.clientX, ev.clientY);
+        setEndpointDrag((prev) => (prev ? { ...prev, x: p.x, y: p.y } : prev));
+      };
+      const cleanup = () => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        window.removeEventListener("pointercancel", onCancel);
+      };
+      const onUp = (ev: PointerEvent) => {
+        cleanup();
+        setEndpointDrag(null);
+        // Resolve drop target: topmost element carrying data-card-id.
+        const stack = document.elementsFromPoint(ev.clientX, ev.clientY);
+        let targetId: string | null = null;
+        for (const node of stack) {
+          if (!(node instanceof HTMLElement)) continue;
+          const found = node.closest<HTMLElement>("[data-card-id]");
+          if (found) {
+            targetId = found.getAttribute("data-card-id");
+            break;
+          }
+        }
+        if (!targetId) return;
+        onReassignEndpoint?.(connectorId, end, targetId);
+      };
+      const onCancel = () => {
+        cleanup();
+        setEndpointDrag(null);
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+      window.addEventListener("pointercancel", onCancel);
+    },
+    [containerRef, onReassignEndpoint]
+  );
 
   const recompute = useCallback(() => {
     const root = containerRef.current;
@@ -250,6 +320,7 @@ export function ConnectorLayer({
         const to = anchorPoint(t, tSide);
         const d = buildPath(from, sSide, to, tSide, e.routing ?? defaultRouting);
         const isSelected = selectedConnectorIds?.has(e.id) ?? false;
+        const isEndpointDragging = endpointDrag?.connectorId === e.id;
         return (
           <g key={e.id} className={isSelected ? "text-accent" : "text-ink-muted"}>
             {/* Invisible hit target — 12px wide so clicks along the path select it. */}
@@ -273,10 +344,29 @@ export function ConnectorLayer({
               strokeLinecap="round"
               strokeLinejoin="round"
               markerEnd={`url(#${isSelected ? "connector-arrow-sel" : "connector-arrow"})`}
-              opacity={isSelected ? 1 : 0.72}
+              opacity={isEndpointDragging ? 0.25 : isSelected ? 1 : 0.72}
             />
             {e.label ? (
               <ConnectorLabel d={d} label={e.label} selected={isSelected} />
+            ) : null}
+            {/* Endpoint handles — visible when the connector is selected so
+                 users can drag either end onto a different card to reroute it
+                 without deleting and recreating. */}
+            {isSelected && onReassignEndpoint ? (
+              <>
+                <EndpointHandle
+                  cx={from.x}
+                  cy={from.y}
+                  end="source"
+                  onPointerDown={(ev) => beginEndpointDrag(e.id, "source", ev)}
+                />
+                <EndpointHandle
+                  cx={to.x}
+                  cy={to.y}
+                  end="target"
+                  onPointerDown={(ev) => beginEndpointDrag(e.id, "target", ev)}
+                />
+              </>
             ) : null}
           </g>
         );
@@ -284,7 +374,97 @@ export function ConnectorLayer({
 
       {/* Draft ghost during drag-to-connect */}
       {draft ? <DraftGhost draft={draft} boxes={boxes} defaultRouting={defaultRouting} /> : null}
+
+      {/* Ghost while dragging an existing connector's endpoint to a new card */}
+      {endpointDrag ? (
+        <EndpointDragGhost
+          drag={endpointDrag}
+          connector={connectors.find((c) => c.id === endpointDrag.connectorId)}
+          boxes={boxes}
+          defaultRouting={defaultRouting}
+        />
+      ) : null}
     </svg>
+  );
+}
+
+function EndpointHandle({
+  cx,
+  cy,
+  end,
+  onPointerDown,
+}: {
+  cx: number;
+  cy: number;
+  end: "source" | "target";
+  onPointerDown: (e: React.PointerEvent) => void;
+}) {
+  return (
+    <g>
+      {/* Outer hit area — generous so the handle is easy to grab at any zoom */}
+      <circle
+        cx={cx}
+        cy={cy}
+        r={9}
+        fill="transparent"
+        className="pointer-events-auto cursor-grab"
+        onPointerDown={onPointerDown}
+        aria-label={end === "source" ? "Drag source endpoint" : "Drag target endpoint"}
+      />
+      {/* Visible dot */}
+      <circle
+        cx={cx}
+        cy={cy}
+        r={4}
+        fill="white"
+        stroke="currentColor"
+        strokeWidth={1.5}
+        className="pointer-events-none"
+      />
+    </g>
+  );
+}
+
+function EndpointDragGhost({
+  drag,
+  connector,
+  boxes,
+  defaultRouting,
+}: {
+  drag: { connectorId: string; end: "source" | "target"; x: number; y: number };
+  connector: Connector | undefined;
+  boxes: Map<string, Box>;
+  defaultRouting: ConnectorRouting;
+}) {
+  if (!connector) return null;
+  const fixedCardId =
+    drag.end === "source" ? connector.targetCardId : connector.sourceCardId;
+  const fixedBox = boxes.get(fixedCardId);
+  if (!fixedBox) return null;
+  const fixedSide: ConnectorAnchor =
+    drag.end === "source"
+      ? connector.targetAnchor ?? "left"
+      : connector.sourceAnchor ?? "right";
+  const fixedPt = anchorPoint(fixedBox, fixedSide);
+  const d = buildPath(
+    fixedPt,
+    fixedSide,
+    { x: drag.x, y: drag.y },
+    "left",
+    connector.routing ?? defaultRouting
+  );
+  return (
+    <g className="text-accent">
+      <path
+        d={d}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={1.75}
+        strokeDasharray="4 4"
+        strokeLinecap="round"
+      />
+      <circle cx={drag.x} cy={drag.y} r={5} fill="currentColor" />
+    </g>
   );
 }
 

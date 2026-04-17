@@ -43,22 +43,6 @@ export function cardMenu(args: {
       onClick: () => beginEdit?.(),
       disabled: !beginEdit,
     },
-    {
-      label: "Duplicate card",
-      icon: Copy,
-      onClick: () => {
-        // Duplicate in the same cell; order defaults to end via applyOps.
-        commitOps([
-          {
-            op: "addCard",
-            colId: card.colId,
-            rowId: card.rowId,
-            text: card.text,
-            meta: card.meta ? { ...card.meta } : undefined,
-          },
-        ]);
-      },
-    },
   ];
 
   if (canAddSubItem) {
@@ -87,6 +71,22 @@ export function cardMenu(args: {
   }
 
   items.push({ kind: "divider" });
+  items.push({
+    label: "Duplicate",
+    icon: Copy,
+    onClick: () => {
+      commitOps([
+        {
+          op: "addCard",
+          colId: card.colId,
+          rowId: card.rowId,
+          text: card.text,
+          meta: card.meta ? { ...card.meta } : undefined,
+        },
+      ]);
+    },
+    shortcut: "⌘D",
+  });
   items.push({
     label: "Delete card",
     icon: Trash2,
@@ -131,12 +131,27 @@ export function rowMenu(args: {
       onClick: () =>
         commitOps([{ op: "addRow", label: `New ${rowNoun}`, atIndex: idx + 1 }]),
     });
+    items.push({
+      label: "Duplicate",
+      icon: Copy,
+      onClick: () =>
+        commitOps([
+          {
+            op: "addRow",
+            label: `${row.label} copy`,
+            kind: row.kind,
+            atIndex: idx + 1,
+          },
+        ]),
+      shortcut: "⌘D",
+    });
     items.push({ kind: "divider" });
     items.push({
       label: `Delete ${rowNoun}`,
       icon: Trash2,
       onClick: () => commitOps([{ op: "removeRow", rowId: row.id }]),
       destructive: true,
+      shortcut: "⌫",
     });
   }
   return items;
@@ -175,12 +190,27 @@ export function colMenu(args: {
       onClick: () =>
         commitOps([{ op: "addCol", label: `New ${colNoun}`, atIndex: idx + 1 }]),
     });
+    items.push({
+      label: "Duplicate",
+      icon: Copy,
+      onClick: () =>
+        commitOps([
+          {
+            op: "addCol",
+            label: `${col.label} copy`,
+            kind: col.kind,
+            atIndex: idx + 1,
+          },
+        ]),
+      shortcut: "⌘D",
+    });
     items.push({ kind: "divider" });
     items.push({
       label: `Delete ${colNoun}`,
       icon: Trash2,
       onClick: () => commitOps([{ op: "removeCol", colId: col.id }]),
       destructive: true,
+      shortcut: "⌫",
     });
   }
   return items;
@@ -223,6 +253,7 @@ export function boardMenu(args: {
       label: "Duplicate board",
       icon: Copy,
       onClick: args.onDuplicate,
+      shortcut: "⌘D",
     });
   }
   if (args.onDelete) {
@@ -232,6 +263,7 @@ export function boardMenu(args: {
       icon: Trash2,
       onClick: args.onDelete,
       destructive: true,
+      shortcut: "⌘⌫",
     });
   }
   return items;
