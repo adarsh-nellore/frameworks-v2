@@ -35,10 +35,12 @@ export function AddSlotButton({
       }}
       style={width ? { width } : undefined}
       className={[
-        // "add" affordances are hidden until the user hovers the surrounding
-        // column/row so the board reads like a slide at rest. Focus keeps
-        // them visible for keyboard users.
-        "opacity-0 focus-visible:opacity-100 group-hover/section:opacity-100",
+        // Primary structural add affordance — keep it discoverable at rest.
+        // An earlier iteration hid it behind group-hover/section, but the
+        // sparse GridLayout (journey-map etc.) doesn't wrap in that group
+        // container, so the button went permanently invisible and users
+        // couldn't add cols or rows. Subdued at rest, full on hover/focus.
+        "opacity-60 hover:opacity-100 focus-visible:opacity-100",
         "inline-flex items-center justify-center gap-1.5",
         "rounded-lg border border-dashed border-border-soft",
         "hover:border-border-medium hover:bg-white/40",
