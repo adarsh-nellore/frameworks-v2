@@ -1,8 +1,12 @@
 import {
+  ArrowDown,
   ArrowDownFromLine,
-  ArrowUpFromLine,
+  ArrowLeft,
   ArrowLeftFromLine,
+  ArrowRight,
   ArrowRightFromLine,
+  ArrowUp,
+  ArrowUpFromLine,
   Copy,
   Pencil,
   Plus,
@@ -118,7 +122,24 @@ export function rowMenu(args: {
   if (beginRename) {
     items.push({ label: "Rename", icon: Pencil, onClick: beginRename });
   }
+  // Reorder is a pure permutation — it doesn't add or remove rows, so it's
+  // allowed even when fixedRows locks the structure.
+  if (map.rows.length > 1) {
+    items.push({
+      label: "Move up",
+      icon: ArrowUp,
+      onClick: () => commitOps([{ op: "moveRow", rowId: row.id, toIndex: idx - 1 }]),
+      disabled: idx <= 0,
+    });
+    items.push({
+      label: "Move down",
+      icon: ArrowDown,
+      onClick: () => commitOps([{ op: "moveRow", rowId: row.id, toIndex: idx + 1 }]),
+      disabled: idx >= map.rows.length - 1,
+    });
+  }
   if (!locked) {
+    if (items.length > 1) items.push({ kind: "divider" });
     items.push({
       label: `Insert ${rowNoun} above`,
       icon: ArrowUpFromLine,
@@ -177,7 +198,24 @@ export function colMenu(args: {
   if (beginRename) {
     items.push({ label: "Rename", icon: Pencil, onClick: beginRename });
   }
+  // Reorder is a pure permutation — it doesn't add or remove cols, so it's
+  // allowed even when fixedCols locks the structure.
+  if (map.cols.length > 1) {
+    items.push({
+      label: "Move left",
+      icon: ArrowLeft,
+      onClick: () => commitOps([{ op: "moveCol", colId: col.id, toIndex: idx - 1 }]),
+      disabled: idx <= 0,
+    });
+    items.push({
+      label: "Move right",
+      icon: ArrowRight,
+      onClick: () => commitOps([{ op: "moveCol", colId: col.id, toIndex: idx + 1 }]),
+      disabled: idx >= map.cols.length - 1,
+    });
+  }
   if (!locked) {
+    if (items.length > 1) items.push({ kind: "divider" });
     items.push({
       label: `Insert ${colNoun} before`,
       icon: ArrowLeftFromLine,

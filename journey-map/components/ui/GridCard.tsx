@@ -156,15 +156,11 @@ export function GridCard({
   function handleClick(e: React.MouseEvent) {
     e.stopPropagation();
     const additive = e.metaKey || e.shiftKey || e.ctrlKey;
-    if (additive) {
-      onSelect(card.id, true);
-      return;
-    }
-    if (agentBusy) {
-      onSelect(card.id, false);
-      return;
-    }
-    onSelect(card.id, false);
+    onSelect(card.id, additive);
+  }
+  function handleDoubleClick(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (agentBusy) return;
     if (!editing) setEditing(true);
   }
 
@@ -200,7 +196,6 @@ export function GridCard({
   const widthClass = layoutMode === "grid" ? "w-[280px] shrink-0" : "w-full";
   const minHeight = layoutMode === "grid" ? "min-h-[88px]" : "min-h-[64px]";
   const padding = layoutMode === "grid" ? "p-3 pl-3.5" : "p-2.5 pl-3";
-  const editPadding = layoutMode === "grid" ? "p-3 pl-3.5" : "p-2.5 pl-3";
 
   const meta: CardMeta = card.meta ?? {};
 
@@ -213,6 +208,7 @@ export function GridCard({
       className={widthClass}
       style={isDragging ? { opacity: 0.3 } : undefined}
       onClick={handleClick}
+      onDoubleClick={handleDoubleClick}
       onContextMenu={
         onContextMenu ? (e) => onContextMenu(e, card.id) : undefined
       }
@@ -264,6 +260,11 @@ export function GridCard({
         )}
 
         {editing ? (
+          // Inline edit: stays in the flex column so the card keeps its
+          // existing height (min-h-[88px] only applies when content is small).
+          // Using an absolute-inset overlay here caused the face to collapse
+          // the moment the user clicked to edit, because the other flex
+          // children (meta chips, sub-items) stopped participating in layout.
           <textarea
             ref={taRef}
             value={draft}
@@ -281,11 +282,11 @@ export function GridCard({
               }
             }}
             className={[
-              "absolute inset-0 w-full h-full rounded-xl bg-white text-ink-primary",
-              "text-[12px] leading-snug resize-none focus:outline-none border border-ink-primary",
-              "shadow-card-hover",
-              editPadding,
+              "flex-1 w-full min-h-[44px] bg-transparent text-ink-primary",
+              "font-sans text-[12px] leading-snug resize-none focus:outline-none",
+              "caret-[rgb(var(--accent))] placeholder:text-ink-muted",
             ].join(" ")}
+            placeholder="Type here…"
           />
         ) : (
           <>
@@ -293,7 +294,7 @@ export function GridCard({
               {card.text ? (
                 renderCellText(card.text, themeKind)
               ) : (
-                <span className="text-ink-muted italic">Click to add…</span>
+                <span className="text-ink-muted italic">Double-click to edit…</span>
               )}
             </p>
 
@@ -546,10 +547,11 @@ function SubItemRow({
     e.stopPropagation();
     const additive = e.metaKey || e.shiftKey || e.ctrlKey;
     onSelect?.(child.id, additive);
-    if (!additive && !agentBusy && isSelected && !editing) {
-      // second click on already-selected → enter edit
-      setEditing(true);
-    }
+  }
+  function handleDoubleClick(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (agentBusy || editing) return;
+    setEditing(true);
   }
 
   function commit() {
@@ -564,6 +566,7 @@ function SubItemRow({
   return (
     <div
       onClick={handleClick}
+      onDoubleClick={handleDoubleClick}
       className={[
         "group/sub relative flex items-start gap-1.5 rounded-md px-1.5 py-1 cursor-pointer transition-colors",
         isSelected
@@ -601,7 +604,7 @@ function SubItemRow({
       ) : (
         <span className="flex-1 min-w-0 text-[11px] leading-snug text-ink-primary break-words">
           {child.text || (
-            <span className="text-ink-muted italic">Click to add…</span>
+            <span className="text-ink-muted italic">Double-click to edit…</span>
           )}
         </span>
       )}

@@ -89,6 +89,18 @@ export function BoardFrame({
   //     state on OS-level focus changes.
   const INTERACTIVE_CHILD =
     "[data-no-drag],[data-block],[data-card-el],[data-floating],input,textarea,button,select,a,[role='button'],[contenteditable='true']";
+  // Any pointerdown inside a board — even on an interactive child — should
+  // activate the board. Without this, clicking a card selects the card but
+  // never sets activeBoardId, so the workspace keyboard handler (Cmd+D,
+  // Delete) can't find an active board and silently returns.
+  const activateOnPointerDown = useCallback(
+    (e: React.PointerEvent) => {
+      if (busy) return;
+      if (e.button !== 0 && e.pointerType !== "touch") return;
+      if (!isActive) onActivate();
+    },
+    [busy, isActive, onActivate]
+  );
   const startBoardDrag = useCallback(
     (e: React.PointerEvent) => {
       if (!onMove || busy) return;
@@ -228,6 +240,9 @@ export function BoardFrame({
       data-board-frame
       data-board-id={board.id}
       data-active={isActive ? "true" : undefined}
+      // Capture-phase listener so activation fires BEFORE card/menu children
+      // call stopPropagation. Bubble-phase startBoardDrag still runs after.
+      onPointerDownCapture={activateOnPointerDown}
       onPointerDown={startBoardDrag}
       className={[
         "absolute rounded-[28px] transition-shadow",
@@ -385,13 +400,12 @@ export function BoardFrame({
           data-board-map-root
           ref={boardRootRef}
           className={[
-            // Board interior paints with --canvas, not --surface, so cards
-            // (which stay on --surface) have a distinct fill and visually
-            // lift off the board. Design-system imports that set a distinct
-            // canvas color show up as the board wash without touching card fill.
+            // Board interior paints with --canvas (brighter than the page
+            // --backdrop), so the board reads as a paper surface lifted off
+            // the desk. Cards stay on --surface so they lift off the board.
             "inline-block rounded-[28px] bg-canvas",
             "px-10 py-10 md:px-12 md:py-12",
-            "shadow-panel ring-1 ring-border-soft/70",
+            "shadow-panel ring-1 ring-border-medium/50",
           ].join(" ")}
         >
           <framework.Component

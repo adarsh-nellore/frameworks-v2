@@ -143,13 +143,15 @@ function CanvasPageInner() {
 
       // Cmd/Ctrl+D — duplicate at the finest active level.
       if ((e.metaKey || e.ctrlKey) && (e.key === "d" || e.key === "D")) {
+        // Always own the shortcut — otherwise the browser "bookmark" dialog
+        // opens whenever we'd have bailed below (no active board, etc.).
+        e.preventDefault();
         if (!activeBoard || !activeFramework) return;
         const sel = activeBoard.selection as
           | { type: "cards"; ids: string[] }
           | { type: "col"; id: string }
           | { type: "row"; id: string }
           | null;
-        e.preventDefault();
         if (sel?.type === "cards" && sel.ids.length > 0) {
           type AnyOp = { op: string; [k: string]: unknown };
           const ops: AnyOp[] = [];
@@ -300,15 +302,18 @@ function CanvasPageInner() {
     return <div className="fixed inset-0" />;
   }
 
-  // Clicking blank canvas space deactivates the current board. Skip any
-  // click that lands inside a board, any floating chrome (copilot, topbar,
-  // zoom controls, library toggle), or an interactive form control —
-  // otherwise typing in the copilot would silently unselect the board.
+  // Clicking blank canvas space deactivates the current board AND clears its
+  // selection — otherwise the selection toolbar lingers after the user has
+  // visibly clicked away. Skip any click that lands inside a board, any
+  // floating chrome (copilot, topbar, zoom controls, library toggle), or an
+  // interactive form control — otherwise typing in the copilot would silently
+  // unselect the board.
   function onCanvasBackgroundClick(e: React.MouseEvent) {
     const target = e.target as HTMLElement;
     if (target.closest("[data-board-frame]")) return;
     if (target.closest("[data-floating]")) return;
     if (target.closest("input,textarea,button,a,select,[role='button']")) return;
+    if (activeBoardId) setBoardSelection(activeBoardId, null);
     setActiveBoardId(null);
   }
 

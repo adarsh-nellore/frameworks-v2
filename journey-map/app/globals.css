@@ -12,7 +12,8 @@
  */
 :root {
   /* Surfaces */
-  --canvas: 250 250 250;          /* #fafafa */
+  --backdrop: 236 236 241;        /* #ececf1 — page/canvas desk, darker than board */
+  --canvas: 250 250 250;          /* #fafafa — board fill, lifts off the backdrop */
   --surface: 255 255 255;         /* #ffffff */
   --surface-subtle: 249 248 249;  /* #f9f8f9 */
   --surface-hover: 241 240 242;   /* #f1f0f2 */
@@ -348,10 +349,10 @@ body {
  */
 body {
   background:
-    radial-gradient(ellipse 80% 50% at 50% -10%, rgb(var(--wash-north) / 0.35), transparent 60%),
-    radial-gradient(ellipse 70% 45% at 90% 110%, rgb(var(--wash-east) / 0.35), transparent 60%),
-    radial-gradient(ellipse 60% 40% at 5% 95%, rgb(var(--wash-south-west) / 0.25), transparent 60%),
-    rgb(var(--canvas));
+    radial-gradient(ellipse 80% 50% at 50% -10%, rgb(var(--wash-north) / 0.30), transparent 60%),
+    radial-gradient(ellipse 70% 45% at 90% 110%, rgb(var(--wash-east) / 0.30), transparent 60%),
+    radial-gradient(ellipse 60% 40% at 5% 95%, rgb(var(--wash-south-west) / 0.22), transparent 60%),
+    rgb(var(--backdrop));
 }
 body::before {
   content: "";
@@ -360,11 +361,13 @@ body::before {
   pointer-events: none;
   background-image: radial-gradient(
     circle at 1px 1px,
-    rgb(var(--dot-grid) / 0.05) 1px,
+    rgb(var(--dot-grid) / 0.18) 1.1px,
     transparent 0
   );
-  background-size: 24px 24px;
-  mask-image: radial-gradient(ellipse 80% 60% at 50% 50%, black 50%, transparent 100%);
+  background-size: 22px 22px;
+  /* Softer edge fade so dots read across most of the viewport instead of only
+     the central 50%. */
+  mask-image: radial-gradient(ellipse 95% 85% at 50% 50%, black 70%, transparent 100%);
 }
 
 /*
