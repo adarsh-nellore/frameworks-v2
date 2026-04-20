@@ -599,18 +599,20 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
         }
       } catch (e) {
         if (e instanceof DOMException && e.name === "AbortError") {
-          // Let the user retry — releasing the placeholder board back to
-          // "ready" so /canvas stops showing the skeleton + overlay.
-          setBoards((prev) =>
-            prev.map((b) => (b.id === boardId ? { ...b, status: "ready" } : b))
-          );
+          // User aborted (e.g. cancelled from UI, or closed the tab).
+          // Drop the placeholder board entirely — it has no usable structure
+          // and leaving it around produces the "empty, unclickable board"
+          // dead-end the user sees when recovery resurrects it post-reload.
+          setBoards((prev) => prev.filter((b) => b.id !== boardId));
+          setActive((curr) => (curr === boardId ? null : curr));
           setPending(null);
           return;
         }
         const msg = e instanceof Error ? e.message : "Unknown error";
-        setBoards((prev) =>
-          prev.map((b) => (b.id === boardId ? { ...b, status: "ready" } : b))
-        );
+        // Same treatment on describe failure — remove the placeholder so the
+        // user isn't stranded on an empty journey-map shell.
+        setBoards((prev) => prev.filter((b) => b.id !== boardId));
+        setActive((curr) => (curr === boardId ? null : curr));
         setPending({ boardId, kind: "describe", lastEvent: null, error: msg });
       } finally {
         pendingAbortRef.current = null;

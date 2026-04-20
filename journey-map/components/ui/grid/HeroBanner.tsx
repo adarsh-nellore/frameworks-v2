@@ -22,20 +22,21 @@ export function HeroBanner({ map, config, createdAt }: Props) {
   return (
     <div
       onClick={(e) => e.stopPropagation()}
-      className="mb-8 px-1"
+      className="mb-10 px-1 border-b border-border-soft pb-5"
     >
-      <h1 className="text-[26px] md:text-[30px] font-semibold tracking-tight text-ink-primary leading-tight">
-        {title}
-      </h1>
-      <div className="mt-1.5 flex items-center gap-2 font-mono text-[10px] tracking-[0.18em] uppercase text-ink-muted">
+      <div className="flex items-center gap-2 font-mono text-[10px] tracking-[0.22em] uppercase text-[rgb(var(--accent))]/80 mb-2">
+        <span className="inline-block h-[3px] w-6 rounded-full bg-[rgb(var(--accent))]/70" />
         <span>{config.label}</span>
         {dateLabel && (
           <>
-            <span aria-hidden="true">·</span>
-            <span>{dateLabel}</span>
+            <span aria-hidden="true" className="text-ink-muted">·</span>
+            <span className="text-ink-muted">{dateLabel}</span>
           </>
         )}
       </div>
+      <h1 className="text-[32px] md:text-[36px] font-semibold tracking-[-0.02em] text-ink-primary leading-[1.05]">
+        {title}
+      </h1>
     </div>
   );
 }

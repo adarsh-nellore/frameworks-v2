@@ -177,11 +177,26 @@ export function GridCard({
   // (`card.meta.flag === 'accent'`). Unflagged cards keep a uniform soft border
   // on all sides so the design system's surface + ink palette drives the look.
   const isFlagged = card.meta?.flag === "accent";
+  // Process-map step semantics get visual differentiation beyond the chip:
+  // start = emerald rail (entry), end = stone rail (terminal),
+  // decision = amber rail + warm tint, task = neutral. This matters for
+  // process maps where every card is "TASK" — without it the eye can't find
+  // the entry / exit / branching points at a glance.
+  const stepKind = card.meta?.stepKind;
+  const stepRail =
+    stepKind === "start"
+      ? "border-l-[3px] border-emerald-500"
+      : stepKind === "end"
+        ? "border-l-[3px] border-stone-500"
+        : stepKind === "decision"
+          ? "border-l-[3px] border-amber-500"
+          : "";
+  const stepTint = stepKind === "decision" ? "bg-amber-50/60" : "";
   const showStripe = isSelected || isFlagged;
   const idleClasses = [
-    theme.tintBg,
+    stepTint || theme.tintBg,
     "border-border-soft shadow-card hover:shadow-card-hover hover:border-border-medium",
-    showStripe ? "border-l-[3px] border-accent" : "",
+    showStripe ? "border-l-[3px] border-accent" : stepRail,
   ].filter(Boolean).join(" ");
 
   const setRootRef = (node: HTMLDivElement | null) => {
@@ -305,6 +320,23 @@ export function GridCard({
                 {metaFields.map((field) => {
                   const val = meta[field.key];
                   if (!val && !field.nullable) return null;
+                  // stepKind is process-map terminology — give each value a
+                  // semantic color so START/END/DECISION read distinct from
+                  // a sea of TASK chips. All other meta fields keep the
+                  // neutral ink-primary chip.
+                  const isStepKind = field.key === "stepKind";
+                  const chipFilled = (() => {
+                    if (!val) return "";
+                    if (!isStepKind)
+                      return "bg-ink-primary text-white border border-ink-primary";
+                    if (val === "start")
+                      return "bg-emerald-600 text-white border border-emerald-600";
+                    if (val === "end")
+                      return "bg-stone-600 text-white border border-stone-600";
+                    if (val === "decision")
+                      return "bg-amber-500 text-stone-900 border border-amber-500";
+                    return "bg-ink-primary text-white border border-ink-primary";
+                  })();
                   return (
                     <button
                       key={field.key}
@@ -324,7 +356,7 @@ export function GridCard({
                       className={[
                         "rounded-full px-2 py-0.5 text-[9px] font-mono uppercase tracking-[0.14em] transition-colors",
                         val
-                          ? "bg-ink-primary text-white border border-ink-primary"
+                          ? chipFilled
                           : "bg-transparent text-ink-muted border border-border-soft hover:text-ink-secondary hover:border-border-medium",
                       ].join(" ")}
                       title={`${field.label}${val ? `: ${val}` : ""}`}

@@ -62,10 +62,13 @@ function buildPath(
   if (routing === "straight") {
     return `M ${from.x} ${from.y} L ${to.x} ${to.y}`;
   }
-  // Orthogonal: drop out perpendicular to each anchor side, then meet in the
-  // middle with a two-bend elbow. Small lead-out so the bend doesn't start
-  // flush against the card edge.
+  // Orthogonal routing. Each end gets a small perpendicular lead-out so the
+  // bend doesn't start flush with the card edge, then we route between the
+  // two lead-out endpoints (a, b) using as few bends as the anchor sides
+  // allow.
   const LEAD = 16;
+  const EPS = 0.5;
+  const isHoriz = (s: ConnectorAnchor) => s === "left" || s === "right";
   const leadOut = (p: { x: number; y: number }, side: ConnectorAnchor) => {
     switch (side) {
       case "top":    return { x: p.x, y: p.y - LEAD };
@@ -76,14 +79,22 @@ function buildPath(
   };
   const a = leadOut(from, fromSide);
   const b = leadOut(to, toSide);
-  // Decide elbow orientation from the sides. If either anchor points
-  // horizontally, do H→V→H (horizontal first); otherwise V→H→V.
-  const horizontalFirst =
-    fromSide === "left" ||
-    fromSide === "right" ||
-    toSide === "left" ||
-    toSide === "right";
-  if (horizontalFirst) {
+  const fromHoriz = isHoriz(fromSide);
+  const toHoriz = isHoriz(toSide);
+
+  // Aligned cases — straight shot between the lead-outs, no synthetic bends.
+  // Catches "directly above/below" and "directly left/right" pairs that the
+  // old midpoint logic was zig-zagging through unnecessarily.
+  if (fromHoriz && toHoriz && Math.abs(a.y - b.y) < EPS) {
+    return `M ${from.x} ${from.y} L ${a.x} ${a.y} L ${b.x} ${b.y} L ${to.x} ${to.y}`;
+  }
+  if (!fromHoriz && !toHoriz && Math.abs(a.x - b.x) < EPS) {
+    return `M ${from.x} ${from.y} L ${a.x} ${a.y} L ${b.x} ${b.y} L ${to.x} ${to.y}`;
+  }
+
+  // Same-axis pairs: classic two-bend elbow at the midpoint along the
+  // perpendicular axis. Both horizontal → H→V→H. Both vertical → V→H→V.
+  if (fromHoriz && toHoriz) {
     const midX = (a.x + b.x) / 2;
     return [
       `M ${from.x} ${from.y}`,
@@ -94,12 +105,38 @@ function buildPath(
       `L ${to.x} ${to.y}`,
     ].join(" ");
   }
-  const midY = (a.y + b.y) / 2;
+  if (!fromHoriz && !toHoriz) {
+    const midY = (a.y + b.y) / 2;
+    return [
+      `M ${from.x} ${from.y}`,
+      `L ${a.x} ${a.y}`,
+      `L ${a.x} ${midY}`,
+      `L ${b.x} ${midY}`,
+      `L ${b.x} ${b.y}`,
+      `L ${to.x} ${to.y}`,
+    ].join(" ");
+  }
+
+  // Mixed axes — single L-bend at the corner where the two lead-out lines
+  // meet. The corner sits on the source's perpendicular axis at the
+  // target's parallel axis (or vice versa), depending on which side leads.
+  // This replaces the old 4-bend H→V→H/V→H→V path that produced visible
+  // dog-legs whenever source and target weren't on matching axes.
+  if (fromHoriz) {
+    // Source leads horizontally → bend at (b.x, a.y).
+    return [
+      `M ${from.x} ${from.y}`,
+      `L ${a.x} ${a.y}`,
+      `L ${b.x} ${a.y}`,
+      `L ${b.x} ${b.y}`,
+      `L ${to.x} ${to.y}`,
+    ].join(" ");
+  }
+  // Source leads vertically → bend at (a.x, b.y).
   return [
     `M ${from.x} ${from.y}`,
     `L ${a.x} ${a.y}`,
-    `L ${a.x} ${midY}`,
-    `L ${b.x} ${midY}`,
+    `L ${a.x} ${b.y}`,
     `L ${b.x} ${b.y}`,
     `L ${to.x} ${to.y}`,
   ].join(" ");

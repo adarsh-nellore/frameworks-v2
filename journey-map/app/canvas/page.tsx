@@ -6,7 +6,6 @@ import { Canvas } from "@/components/Canvas";
 import { Copilot } from "@/components/Copilot";
 import { CustomFrameworkDialog } from "@/components/CustomFrameworkDialog";
 import { FrameworkLibrary } from "@/components/FrameworkLibrary";
-import { GenerationOverlay } from "@/components/GenerationOverlay";
 import { TopBar } from "@/components/TopBar";
 import { ZoomControls } from "@/components/ZoomControls";
 import { BoardFrame } from "@/components/BoardFrame";
@@ -296,9 +295,12 @@ function CanvasPageInner() {
 
   const allFrameworks = listFrameworks();
 
-  // Hydrated but no boards → the redirect effect above will fire; render
-  // nothing for a beat rather than flashing the old empty state.
-  if (hydrated && boards.length === 0) {
+  // Single-project empty state → the redirect effect above sends us to the
+  // landing page, so render nothing for a beat rather than flashing chrome.
+  // Multi-project empty state (user created a new blank project) → render the
+  // canvas chrome with an inline CTA so the user has a way to add a board
+  // instead of staring at a blank screen.
+  if (hydrated && boards.length === 0 && projects.length <= 1) {
     return <div className="fixed inset-0" />;
   }
 
@@ -321,6 +323,30 @@ function CanvasPageInner() {
     <div className="fixed inset-0" onPointerDown={onCanvasBackgroundClick}>
       <Canvas locked={generationActive || isPendingGenerate || isPendingDescribe}>
         <div ref={stageRef} className="relative p-12" style={{ minWidth: 800, minHeight: 600 }}>
+          {boards.length === 0 && hydrated && (
+            <div
+              data-floating
+              className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-center"
+            >
+              <div className="text-[15px] text-ink-secondary mb-1">
+                This project is empty.
+              </div>
+              <div className="text-[13px] text-ink-muted mb-4">
+                Add a board to get started.
+              </div>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setLibraryOpen(true);
+                }}
+                className="inline-flex items-center gap-2 rounded-xl bg-ink-primary px-4 py-2 text-[13px] font-medium text-white hover:bg-ink-primary/90 transition"
+              >
+                <span aria-hidden>⊞</span>
+                Add from library
+              </button>
+            </div>
+          )}
           {boards.map((board) => (
             <BoardFrame
               key={board.id}
@@ -457,22 +483,21 @@ function CanvasPageInner() {
 
       <ZoomControls onFit={fitAll} />
 
-      {(activeBoard && (isPendingGenerate || generationActive)) && (
-        <GenerationOverlay
-          active
-          progress={pendingForActive?.lastEvent ?? generation}
-          onCancel={() => {
-            if (isPendingGenerate) cancelPending();
-            else onGenerationCancel();
-          }}
-          frameworkLabel={activeFramework?.label ?? "your framework"}
-        />
-      )}
-
-      {/* Bottom-center error toast for pending failures */}
-      {pendingForActive?.error && (
-        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 glass rounded-xl px-4 py-3 text-[13px] text-rose-900 bg-rose-50/80 border border-rose-100 max-w-md">
-          {pendingForActive.error}
+      {/* Bottom-center error toast for pending failures. Keyed off `pending`
+          (not `pendingForActive`) so it still renders when the failed board
+          was removed — otherwise the user sees nothing after a describe
+          error. Auto-dismisses on new input or explicit close. */}
+      {pending?.error && (
+        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 glass rounded-xl px-4 py-3 pr-9 text-[13px] text-rose-900 bg-rose-50/80 border border-rose-100 max-w-md">
+          {pending.error}
+          <button
+            type="button"
+            onClick={cancelPending}
+            className="absolute top-2 right-2 h-5 w-5 grid place-items-center rounded hover:bg-rose-100 text-rose-700"
+            aria-label="Dismiss"
+          >
+            ×
+          </button>
         </div>
       )}
     </div>

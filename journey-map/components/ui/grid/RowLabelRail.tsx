@@ -80,8 +80,8 @@ export function RowLabelRail({
     >
       <div
         className={[
-          "flex items-center gap-2 px-2 py-1.5 rounded-md transition-colors duration-150 select-none w-full min-w-0",
-          isSelected ? "bg-ink-primary text-white" : "",
+          "flex items-center gap-2.5 px-2.5 py-2 rounded-md transition-colors duration-150 select-none w-full min-w-0",
+          isSelected ? "bg-ink-primary text-white" : "hover:bg-ink-primary/[0.04]",
         ].join(" ")}
       >
         <Icon
@@ -108,13 +108,13 @@ export function RowLabelRail({
                 setDraft(label);
               }
             }}
-            className="min-w-0 flex-1 bg-transparent outline-none font-sans text-[13px] text-ink-primary tracking-tight"
+            className="min-w-0 flex-1 bg-transparent outline-none font-sans text-[13px] font-medium text-ink-primary tracking-tight"
           />
         ) : (
           <span
             className={[
-              "min-w-0 truncate font-sans text-[13px] tracking-tight flex-1",
-              isSelected ? "text-white" : "text-ink-secondary",
+              "min-w-0 truncate font-sans text-[13px] font-medium tracking-tight flex-1",
+              isSelected ? "text-white" : "text-ink-primary",
             ].join(" ")}
           >
             {label || "[row]"}

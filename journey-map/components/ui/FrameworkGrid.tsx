@@ -232,6 +232,12 @@ export function FrameworkGrid({
       if (!overData) return;
       let toColId: string | undefined;
       let toRowId: string | undefined;
+      // When dropping ONTO a card, anchor insertion at that card's order so
+      // the dragged card lands just before it — this is what enables
+      // same-column reordering (previously a same-cell drop no-op'd).
+      // Fractional orders are fine: applyOps treats `order` as numeric and
+      // cardsAt() sorts ascending, so 2.5 slots cleanly between 2 and 3.
+      let toOrderAnchor: number | undefined;
 
       if (overData.kind === "card" && overData.cardId) {
         // Don't drop onto a card that's part of the dragging group.
@@ -240,6 +246,18 @@ export function FrameworkGrid({
         if (!over) return;
         toColId = over.colId;
         toRowId = over.rowId;
+        // Direction-aware insertion: if the anchor card is being dragged DOWN
+        // (its current order < over.order in the same cell), land it BELOW
+        // the drop target. Dragging UP or coming from another cell lands it
+        // ABOVE. Without this, every same-cell drop inserts before the
+        // target, making down-drags look like they "didn't move far enough".
+        const anchor = map.cards.find((c) => c.id === drag.anchorId);
+        const sameCell =
+          !!anchor &&
+          anchor.colId === over.colId &&
+          anchor.rowId === over.rowId;
+        const draggingDown = sameCell && (anchor?.order ?? 0) < over.order;
+        toOrderAnchor = draggingDown ? over.order + 0.5 : over.order - 0.5;
       } else if (overData.kind === "slot" && overData.colId && overData.rowId) {
         toColId = overData.colId;
         toRowId = overData.rowId;
@@ -247,15 +265,32 @@ export function FrameworkGrid({
         return;
       }
 
-      // Build a batch of moveCard ops, one per selected card. Skip cards that
-      // already live in the target so the batch only emits real moves.
+      // Build a batch of moveCard ops, one per dragged card. For group drops,
+      // spread fractional orders so relative order within the group survives.
       const ops: Op[] = [];
-      for (const id of drag.ids) {
+      const n = drag.ids.length;
+      drag.ids.forEach((id, i) => {
         const card = map.cards.find((c) => c.id === id);
-        if (!card) continue;
-        if (card.colId === toColId && card.rowId === toRowId) continue;
-        ops.push({ op: "moveCard", cardId: card.id, toColId, toRowId });
-      }
+        if (!card) return;
+        // Same-cell, same-position drop = no-op.
+        if (
+          card.colId === toColId &&
+          card.rowId === toRowId &&
+          toOrderAnchor === undefined
+        )
+          return;
+        const toOrder =
+          toOrderAnchor !== undefined
+            ? toOrderAnchor + (i - (n - 1) / 2) * 0.001
+            : undefined;
+        ops.push({
+          op: "moveCard",
+          cardId: card.id,
+          toColId: toColId!,
+          toRowId: toRowId!,
+          ...(toOrder !== undefined ? { toOrder } : {}),
+        });
+      });
       if (ops.length > 0) commitOps(ops);
       return;
     }
