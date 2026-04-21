@@ -41,7 +41,8 @@ export async function runTablePipeline(
         cache_control: { type: "ephemeral" },
       },
     ],
-    tool_choice: { type: "tool", name: BUILD_TABLE_TOOL_NAME },
+    // tool_choice:"auto" — extended thinking is incompatible with forced tool use.
+    tool_choice: { type: "auto" },
     messages: [{ role: "user", content: userContent }],
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any;

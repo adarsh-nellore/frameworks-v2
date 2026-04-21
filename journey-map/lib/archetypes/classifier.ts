@@ -17,7 +17,12 @@ export type ClassifyResult =
     }
   | { kind: "fallback"; scores: ArchetypeScore[] };
 
-export const DEFAULT_THRESHOLD = 0.7;
+// Lowered from 0.70 → 0.50 with the template library (R2+). With 25 templates
+// the classifier has higher resolution on intent — a 0.70 bar was rejecting
+// matches that are structurally correct (cartesian plot / table / etc.) but
+// not a textbook-perfect phrasing. We rely on the archetype's own quality bar
+// to catch genuinely-wrong routes after the fact.
+export const DEFAULT_THRESHOLD = 0.5;
 
 const TOOL_NAME = "archetype_scores";
 

@@ -733,25 +733,52 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
         if (!res.ok || !data?.ok) {
           throw new Error(data?.error ?? `Describe failed (HTTP ${res.status})`);
         }
-        const config = data.config as FrameworkConfig;
-        const populatedMap = data.populatedMap as UniversalMap;
-        if (!isDynamicFramework(config.id)) registerDynamicFramework(config);
-        saveCustomFramework(config);
-        setBoards((prev) =>
-          prev.map((b) =>
-            b.id === boardId
-              ? {
-                  ...b,
-                  frameworkId: config.id,
-                  customConfig: config,
-                  title: populatedMap.title || config.label,
-                  map: populatedMap,
-                  status: "ready",
-                  pendingPrompt: undefined,
-                }
-              : b
-          )
-        );
+
+        if (data.mode === "archetype") {
+          // Classifier routed the prompt to a bespoke archetype. The board
+          // becomes an archetype board; `map` carries the typed doc (the
+          // BoardFrame narrows on archetypeId at render time).
+          const archetypeId = data.archetypeId as string;
+          const doc = data.doc as UniversalMap; // type-widened at the boundary
+          const title = (data.title as string) || (doc as { title?: string })?.title || "Untitled";
+          setBoards((prev) =>
+            prev.map((b) =>
+              b.id === boardId
+                ? {
+                    ...b,
+                    // Keep placeholder frameworkId so BoardFrame's safelyGetFramework
+                    // returns a non-null framework (edit chrome defaults); the
+                    // archetypeId discriminator decides rendering path.
+                    archetypeId,
+                    title,
+                    map: doc,
+                    status: "ready",
+                    pendingPrompt: undefined,
+                  }
+                : b
+            )
+          );
+        } else {
+          const config = data.config as FrameworkConfig;
+          const populatedMap = data.populatedMap as UniversalMap;
+          if (!isDynamicFramework(config.id)) registerDynamicFramework(config);
+          saveCustomFramework(config);
+          setBoards((prev) =>
+            prev.map((b) =>
+              b.id === boardId
+                ? {
+                    ...b,
+                    frameworkId: config.id,
+                    customConfig: config,
+                    title: populatedMap.title || config.label,
+                    map: populatedMap,
+                    status: "ready",
+                    pendingPrompt: undefined,
+                  }
+                : b
+            )
+          );
+        }
         const warnings = Array.isArray(data.warnings)
           ? (data.warnings as unknown[]).filter(
               (w): w is string => typeof w === "string"

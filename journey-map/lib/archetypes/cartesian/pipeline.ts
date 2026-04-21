@@ -24,8 +24,11 @@ export async function runCartesianPipeline(
 
   const params = {
     model: getAgentModel(),
-    max_tokens: 16000,
-    thinking: { type: "enabled", budget_tokens: 6000 },
+    max_tokens: 20000,
+    // 16k thinking lets the agent reason through the 6-step scaffold in the
+    // system prompt (5 candidate axis pairs → reject MBA answer → pick
+    // domain-insider axes → pick specialists → place points → label).
+    thinking: { type: "enabled", budget_tokens: 16000 },
     system: [
       {
         type: "text",
@@ -41,7 +44,10 @@ export async function runCartesianPipeline(
         cache_control: { type: "ephemeral" },
       },
     ],
-    tool_choice: { type: "tool", name: BUILD_CARTESIAN_TOOL_NAME },
+    // tool_choice:"auto" — Anthropic's extended thinking is incompatible with
+    // forced tool use. With a single tool available and a prompt that demands
+    // its use, the model still reliably calls it.
+    tool_choice: { type: "auto" },
     messages: [{ role: "user", content: userContent }],
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any;

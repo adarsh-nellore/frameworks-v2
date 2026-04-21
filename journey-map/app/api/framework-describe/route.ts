@@ -13,6 +13,11 @@ import { ingestSources, IngestionError, type RawInput, type IngestedSource } fro
 import { buildSourceContentBlocks } from "@/lib/pipeline/source-content";
 import type { FrameworkConfig } from "@/lib/frameworks/universal/config";
 import type { UniversalMap } from "@/lib/frameworks/universal/types";
+import {
+  classifyIntent,
+  DEFAULT_THRESHOLD as CLASSIFIER_THRESHOLD,
+} from "@/lib/archetypes/classifier";
+import { getArchetype, hasArchetypes } from "@/lib/archetypes";
 
 export const runtime = "nodejs";
 
@@ -33,9 +38,19 @@ export const runtime = "nodejs";
 type DescribeRes =
   | {
       ok: true;
+      mode: "universal";
       config: FrameworkConfig;
       populatedMap: UniversalMap;
       populationSummary?: string;
+      warnings?: string[];
+    }
+  | {
+      ok: true;
+      mode: "archetype";
+      archetypeId: string;
+      doc: unknown;
+      summary: string;
+      title: string;
       warnings?: string[];
     }
   | { ok: false; error: string };
@@ -96,6 +111,73 @@ export async function POST(req: Request): Promise<Response> {
       // why their URL / file didn't inform the generated framework.
       const msg = e instanceof IngestionError ? e.message : (e as Error).message;
       warnings.push(`Could not ingest sources: ${msg}`);
+    }
+  }
+
+  // ── Call 0: classifier — route intent to an archetype when confident ───────
+  // If the description maps clearly to one of our bespoke archetypes (cartesian
+  // plot, table, competitive matrix, journey map, process map), we bypass the
+  // universal FrameworkConfig synthesis path entirely and let the archetype's
+  // own pipeline produce a typed domain doc. The universal describe path only
+  // runs when the classifier can't confidently route anywhere.
+  if (hasArchetypes()) {
+    try {
+      const routing = await classifyIntent(description, CLASSIFIER_THRESHOLD);
+      if (routing.kind === "archetype") {
+        const archetype = getArchetype(routing.archetypeId);
+        if (archetype) {
+          console.log(
+            `[framework-describe] classifier → archetype=${routing.archetypeId} score=${routing.score.toFixed(2)}`
+          );
+          try {
+            const result = await archetype.pipeline({
+              description,
+              preamble: null,
+              sources,
+              emit: () => {
+                /* JSON endpoint — no SSE stream. Progress events discarded. */
+              },
+            });
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const docAny = result.doc as any;
+            const title =
+              (docAny && typeof docAny === "object" && typeof docAny.title === "string" && docAny.title) ||
+              archetype.label;
+            return respond(
+              {
+                ok: true,
+                mode: "archetype",
+                archetypeId: archetype.id,
+                doc: result.doc,
+                summary: result.summary,
+                title,
+                ...(warnings.length > 0 ? { warnings } : {}),
+              },
+              200
+            );
+          } catch (e) {
+            // Archetype pipeline failed — log, fall through to the universal
+            // describe path so the user still gets *something* usable.
+            const msg = e instanceof Error ? e.message : "Unknown error";
+            console.error(
+              `[framework-describe] archetype pipeline failed (${archetype.id}): ${msg}. Falling back to universal synthesis.`
+            );
+            warnings.push(`Archetype pipeline failed: ${msg}`);
+          }
+        }
+      } else {
+        const topScore = routing.scores[0]?.score;
+        console.log(
+          `[framework-describe] classifier → fallback (top score ${topScore?.toFixed(2) ?? "n/a"})`
+        );
+      }
+    } catch (e) {
+      // Classification itself failed (API / network) — not fatal, continue to
+      // the universal path.
+      const msg = e instanceof Error ? e.message : "Unknown error";
+      console.error(
+        `[framework-describe] classifier errored: ${msg}. Falling back to universal synthesis.`
+      );
     }
   }
 
@@ -168,6 +250,7 @@ export async function POST(req: Request): Promise<Response> {
   return respond(
     {
       ok: true,
+      mode: "universal",
       config,
       populatedMap,
       ...(populationSummary ? { populationSummary } : {}),
