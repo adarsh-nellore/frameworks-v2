@@ -7,8 +7,8 @@ import {
 } from "../lib/archetypes/classifier";
 import { listArchetypes } from "../lib/archetypes";
 
-test("DEFAULT_THRESHOLD is 0.7", () => {
-  assert.equal(DEFAULT_THRESHOLD, 0.7);
+test("DEFAULT_THRESHOLD is 0.5 (lowered with template library in R1)", () => {
+  assert.equal(DEFAULT_THRESHOLD, 0.5);
 });
 
 test("classifyIntent short-circuits to fallback when archetype list is empty", async () => {

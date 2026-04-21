@@ -24,8 +24,10 @@ export async function runTablePipeline(
 
   const params = {
     model: getAgentModel(),
-    max_tokens: 16000,
-    thinking: { type: "enabled", budget_tokens: 6000 },
+    max_tokens: 20000,
+    // 16k thinking so the agent enumerates 12 candidate columns, rejects
+    // generic labels, and populates 15–30 grounded rows.
+    thinking: { type: "enabled", budget_tokens: 16000 },
     system: [
       {
         type: "text",

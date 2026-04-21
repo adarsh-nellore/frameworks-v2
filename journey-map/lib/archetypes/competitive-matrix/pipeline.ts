@@ -24,8 +24,11 @@ export async function runCompetitiveMatrixPipeline(
 
   const params = {
     model: getAgentModel(),
-    max_tokens: 16000,
-    thinking: { type: "enabled", budget_tokens: 6000 },
+    max_tokens: 20000,
+    // 16k thinking so the agent can actually run the 6-step reasoning
+    // scaffold (list 15 capability candidates → reject generics → keep only
+    // those that separate → pick cell kinds → pick outlier competitors).
+    thinking: { type: "enabled", budget_tokens: 16000 },
     system: [
       {
         type: "text",

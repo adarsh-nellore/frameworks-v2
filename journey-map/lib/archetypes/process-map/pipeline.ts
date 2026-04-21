@@ -24,8 +24,11 @@ export async function runProcessMapPipeline(
 
   const params = {
     model: getAgentModel(),
-    max_tokens: 16000,
-    thinking: { type: "enabled", budget_tokens: 6000 },
+    max_tokens: 20000,
+    // 16k thinking so the agent can run the 7-step reasoning scaffold
+    // (list actors vs phases → reject diagonal-collapse → distinct lanes →
+    // node kinds → slug ids → edge kinds → labels).
+    thinking: { type: "enabled", budget_tokens: 16000 },
     system: [
       {
         type: "text",
