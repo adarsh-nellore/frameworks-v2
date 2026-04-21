@@ -14,6 +14,11 @@ import { extractAtomsFromSource, type SourceAtoms } from "@/lib/pipeline/extract
 import { structureMap } from "@/lib/pipeline/structure";
 import { executeArrange } from "@/lib/frameworks/arrange-execute";
 import { applyOps } from "@/lib/frameworks/universal";
+import {
+  getArchetype,
+  hasArchetypes,
+} from "@/lib/archetypes";
+import { classifyIntent } from "@/lib/archetypes/classifier";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -121,12 +126,6 @@ export async function POST(req: Request) {
     });
   }
 
-  if (!parsed.frameworkId) {
-    return new Response(JSON.stringify({ error: "Missing frameworkId" }), {
-      status: 400,
-      headers: { "content-type": "application/json" },
-    });
-  }
   if (!parsed.inputs.length) {
     return new Response(
       JSON.stringify({ error: "Provide at least one source (paste, file, or URL)" }),
@@ -134,15 +133,24 @@ export async function POST(req: Request) {
     );
   }
 
-  let framework;
-  try {
-    framework = getFramework(parsed.frameworkId);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : "Unknown framework";
-    return new Response(JSON.stringify({ error: msg }), {
-      status: 400,
-      headers: { "content-type": "application/json" },
-    });
+  // Route selection:
+  //   - Explicit frameworkId (legacy / user picked a framework): universal path.
+  //   - "auto" or missing: classify, dispatch to archetype if ≥ threshold,
+  //     else fall back to universal journey-map for now.
+  const autoMode =
+    !parsed.frameworkId || parsed.frameworkId === "auto";
+
+  let framework: ReturnType<typeof getFramework> | null = null;
+  if (!autoMode) {
+    try {
+      framework = getFramework(parsed.frameworkId);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Unknown framework";
+      return new Response(JSON.stringify({ error: msg }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+    }
   }
 
   const encoder = new TextEncoder();
@@ -159,6 +167,61 @@ export async function POST(req: Request) {
           throw new Error("No usable sources after ingestion");
         }
         emit({ phase: "ingesting", sourcesCount: sources.length });
+
+        // ── Classification (auto mode only) ──────────────────────────────────
+        if (autoMode && hasArchetypes()) {
+          const description = buildDescriptionForClassifier(
+            parsed,
+            sources
+          );
+          const routing = await classifyIntent(description);
+          emit({
+            phase: "classifying",
+            route: routing.kind,
+            archetypeId:
+              routing.kind === "archetype" ? routing.archetypeId : undefined,
+            scores: routing.scores,
+          });
+
+          if (routing.kind === "archetype") {
+            const archetype = getArchetype(routing.archetypeId);
+            if (archetype) {
+              const result = await archetype.pipeline({
+                description,
+                preamble: parsed.preamble,
+                sources,
+                emit: (ev) => emit(ev),
+              });
+              emit({
+                phase: "result",
+                summary: result.summary,
+                map: result.doc,
+                archetypeId: archetype.id,
+                debug: {
+                  mode: "two-pass",
+                  sourcesCount: sources.length,
+                  opsCount: result.opsCount,
+                  fidelityMode: parsed.fidelityMode,
+                  critiqueRan: parsed.fidelityMode,
+                  revisionRan: false,
+                },
+              });
+              controller.close();
+              return;
+            }
+          }
+
+          // Fallback: no archetype registered OR classifier below threshold.
+          // Use journey-map universal config as the fallback framework so the
+          // pipeline has something to populate.
+          framework = getFramework("journey-map");
+        }
+
+        if (!framework) {
+          // Defensive: autoMode with no archetypes registered should still
+          // reach the universal path above; this path handles misconfiguration.
+          throw new Error("No framework resolved for generation");
+        }
 
         // Topic-prompt fast path: when the only input is a short paste — e.g.
         // the user typed "Kaiser Permanente" and picked a framework — there's
@@ -293,6 +356,25 @@ export async function POST(req: Request) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Topic-prompt support
 // ─────────────────────────────────────────────────────────────────────────────
+
+/** Build a single natural-language description of user intent for the
+ *  archetype classifier. Prefers the first pasted text, falls back to source
+ *  names + any title/persona hints in the preamble. */
+function buildDescriptionForClassifier(
+  parsed: ParsedRequest,
+  sources: IngestedSource[]
+): string {
+  const pasted = parsed.inputs.find((i) => i.type === "paste");
+  if (pasted && "text" in pasted && pasted.text.trim()) {
+    const trimmed = pasted.text.trim();
+    return parsed.preamble
+      ? `${parsed.preamble}\n\n${trimmed}`
+      : trimmed;
+  }
+  const sourceNames = sources.map((s) => s.name).filter(Boolean).join(", ");
+  const head = parsed.preamble ?? "";
+  return `${head}\n\nSources provided: ${sourceNames}`.trim();
+}
 
 /** Recognise a single-paste, short-text input as a topic prompt rather than
  *  research material to atomize. Threshold is generous (≤ 600 chars) so a

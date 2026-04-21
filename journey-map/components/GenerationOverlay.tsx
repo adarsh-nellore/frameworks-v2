@@ -220,6 +220,10 @@ function currentStepLabel(progress: GenerateEvent | null, frameworkLabel: string
   switch (progress.phase) {
     case "ingesting":
       return "Reading sources…";
+    case "classifying":
+      return progress.route === "archetype"
+        ? "Routing to archetype…"
+        : "Matching intent…";
     case "subject_id":
       return "Identifying subject…";
     case "extracting":

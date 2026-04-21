@@ -8,6 +8,7 @@
 
 export type GeneratePhase =
   | "ingesting"
+  | "classifying"
   | "subject_id"
   | "extracting"
   | "synthesizing"
@@ -16,8 +17,20 @@ export type GeneratePhase =
   | "result"
   | "error";
 
+export type ClassifyScore = {
+  id: string;
+  score: number;
+  rationale: string;
+};
+
 export type GenerateEvent<TMap = unknown> =
   | { phase: "ingesting"; sourcesCount: number }
+  | {
+      phase: "classifying";
+      route: "archetype" | "fallback";
+      archetypeId?: string;
+      scores: ClassifyScore[];
+    }
   | {
       phase: "subject_id";
       current: number;
@@ -36,7 +49,15 @@ export type GenerateEvent<TMap = unknown> =
   | {
       phase: "result";
       summary: string;
+      /** The generated document. Universal path returns a `UniversalMap`;
+       *  archetype path returns the archetype's typed document (TableDoc,
+       *  CartesianDoc, …). The UI should branch on `archetypeId` to pick
+       *  the renderer. */
       map: TMap;
+      /** Identifies which renderer produced the result.
+       *  Absent / "universal" ⇒ render via FrameworkGrid.
+       *  Otherwise ⇒ render via the named archetype. */
+      archetypeId?: string;
       debug: GenerateDebug;
     }
   | { phase: "error"; message: string };
