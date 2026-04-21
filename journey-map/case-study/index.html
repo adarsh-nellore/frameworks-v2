@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Journey Map Builder · Case Study</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg:        #0A0A0B;
+    --ink:       #FFFFFF;
+    --text:      #E5E5E7;
+    --muted:     #8A8A93;
+    --muted-2:   #5C5C64;
+    --border:    #1F1F23;
+    --border-2:  #2C2C33;
+    --chip-bd:   #2C2C33;
+
+    --frame-bg:  #EEEEF4;   /* light lavender, like the reference */
+    --frame-inner: #FFFFFF;
+    --accent:    #7F88FF;
+
+    --max-w:     1040px;
+    --gutter:    32px;
+
+    --section-gap: 140px;
+    --figure-radius: 28px;
+    --figure-pad: 72px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: 'Inter', system-ui, -apple-system, sans-serif; font-size: 17px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
+
+  .container { max-width: var(--max-w); margin: 0 auto; padding: 0 var(--gutter); }
+
+  /* Typography */
+  h1, h2, h3 { color: var(--ink); letter-spacing: -0.02em; margin: 0; font-weight: 500; }
+  h1 { font-size: 56px; line-height: 1.08; font-weight: 500; }
+  h2 { font-size: 38px; line-height: 1.2; font-weight: 500; }  /* headline */
+  h3 { font-size: 18px; line-height: 1.4; font-weight: 600; letter-spacing: -0.01em; }
+  p  { margin: 0; font-size: 17px; line-height: 1.6; color: var(--text); }
+  a { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
+  a:hover { color: var(--accent); }
+
+  /* Nav */
+  .nav { position: sticky; top: 0; z-index: 10; background: rgba(10,10,11,0.82); backdrop-filter: blur(14px); border-bottom: 1px solid var(--border); }
+  .nav-inner { max-width: var(--max-w); margin: 0 auto; padding: 16px var(--gutter); display: flex; justify-content: space-between; align-items: center; }
+  .nav a { font-size: 13px; text-decoration: none; color: var(--muted); font-weight: 500; }
+  .nav a:hover { color: var(--ink); }
+  .nav-brand { font-size: 13px; font-weight: 600; color: var(--ink); }
+
+  /* Hero */
+  .hero { padding: 120px 0 32px; }
+  .hero .eyebrow { margin-bottom: 20px; }
+  .hero p.lead { margin-top: 24px; font-size: 20px; line-height: 1.5; color: var(--muted); max-width: 720px; }
+  .meta { display: flex; gap: 48px; margin-top: 48px; flex-wrap: wrap; }
+  .meta-item .label { font-family: 'JetBrains Mono', monospace; font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); font-weight: 400; margin-bottom: 6px; }
+  .meta-item .value { font-size: 15px; font-weight: 500; color: var(--ink); }
+
+  /* The template section — tag / headline / image / caption */
+  section.block { padding-top: var(--section-gap); }
+
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    padding: 7px 14px;
+    border: 1px solid var(--chip-bd);
+    border-radius: 6px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 400;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .headline {
+    margin-top: 28px;
+    font-size: 38px;
+    line-height: 1.2;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    color: var(--ink);
+    max-width: 900px;
+  }
+
+  /* Unified figure frame — all image-type things use this */
+  .figure {
+    margin-top: 56px;
+  }
+  .figure-frame {
+    width: 100%;
+    aspect-ratio: 16 / 10;
+    background: var(--frame-bg);
+    border-radius: var(--figure-radius);
+    padding: var(--figure-pad);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    position: relative;
+  }
+  .figure-frame > .inner {
+    width: 100%;
+    height: 100%;
+    background: var(--frame-inner);
+    border-radius: 12px;
+    box-shadow: 0 18px 40px rgba(17,20,60,0.12), 0 2px 6px rgba(17,20,60,0.06);
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .figure-frame > .inner > img,
+  .figure-frame > .inner > iframe,
+  .figure-frame > .inner > video {
+    width: 100%; height: 100%; object-fit: cover; display: block; border: 0;
+  }
+  .placeholder {
+    width: 100%; height: 100%;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--muted-2);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    background: linear-gradient(180deg, #FAFAFB, #F2F2F6);
+  }
+
+  /* Caption / description under the figure */
+  .caption {
+    margin-top: 40px;
+    max-width: 820px;
+  }
+  .caption .lead {
+    font-size: 19px;
+    line-height: 1.45;
+    font-weight: 500;
+    color: var(--ink);
+    letter-spacing: -0.01em;
+  }
+  .caption p {
+    margin-top: 18px;
+    font-size: 16px;
+    line-height: 1.65;
+    color: var(--muted);
+  }
+
+  /* Interactive frameworks (research tabs) — drops into the figure-frame */
+  .frameworks {
+    width: 100%; height: 100%;
+    display: flex; flex-direction: column;
+    background: var(--frame-inner);
+  }
+  .frameworks-tabs {
+    display: flex; gap: 0;
+    border-bottom: 1px solid #E5E7EB;
+    padding: 0 28px;
+    flex-shrink: 0;
+  }
+  .fw-tab {
+    padding: 18px 20px;
+    font-family: 'Inter', sans-serif;
+    font-size: 13px;
+    font-weight: 500;
+    color: #6B7280;
+    background: none;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .fw-tab:hover { color: #0A0A0B; }
+  .fw-tab.active { color: #0A0A0B; border-bottom-color: #0A0A0B; }
+  .fw-panel {
+    display: none;
+    flex: 1;
+    padding: 36px 40px;
+    animation: fadeIn 0.25s ease-out;
+    overflow: auto;
+  }
+  .fw-panel.active { display: flex; flex-direction: column; justify-content: center; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+  .fw-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: #8A8A93;
+    margin-bottom: 14px;
+  }
+  .fw-title {
+    font-size: 22px;
+    line-height: 1.3;
+    font-weight: 600;
+    color: #0A0A0B;
+    letter-spacing: -0.01em;
+    max-width: 560px;
+  }
+  .fw-body {
+    font-size: 14px;
+    line-height: 1.6;
+    color: #6B7280;
+    margin-top: 12px;
+    max-width: 560px;
+  }
+
+  /* Footer */
+  footer { margin-top: var(--section-gap); padding: 48px 0 80px; border-top: 1px solid var(--border); }
+  footer .container { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 24px; }
+  footer p { font-size: 13px; color: var(--muted); }
+
+  /* Mobile */
+  @media (max-width: 720px) {
+    :root { --section-gap: 88px; --gutter: 20px; --figure-pad: 32px; --figure-radius: 20px; }
+    h1 { font-size: 36px; }
+    .headline { font-size: 26px; margin-top: 20px; }
+    .hero { padding: 56px 0 24px; }
+    .hero p.lead { font-size: 17px; }
+    .caption { margin-top: 28px; }
+    .caption .lead { font-size: 17px; }
+    .figure { margin-top: 32px; }
+    .meta { gap: 24px; }
+  }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="nav-brand" href="#">Adarsh Nellore</a>
+    <div style="display: flex; gap: 20px;">
+      <a href="#overview">Overview</a>
+      <a href="#research">Research</a>
+      <a href="#shape">Shape</a>
+      <a href="#copilot">Copilot</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="container">
+    <div class="tag">Research Frameworks · 2026</div>
+    <h1 style="margin-top: 24px;">A journey map you don't have to rebuild every time.</h1>
+    <p class="lead">Strategists spend hours pushing rectangles in Figma every time a new persona walks in. I designed a modular primitive — stages × rows × cells — that treats a journey map as data, not a drawing.</p>
+    <div class="meta">
+      <div class="meta-item"><div class="label">Role</div><div class="value">Design + Build, Solo</div></div>
+      <div class="meta-item"><div class="label">Timeline</div><div class="value">6 weeks · Q1 2026</div></div>
+      <div class="meta-item"><div class="label">Stack</div><div class="value">Next.js · TypeScript · Claude</div></div>
+      <div class="meta-item"><div class="label">Status</div><div class="value">Live v1</div></div>
+    </div>
+  </div>
+</header>
+
+<main>
+
+  <!-- SECTION 1 · PROBLEM -->
+  <section class="block" id="overview">
+    <div class="container">
+      <span class="tag">The Problem</span>
+      <h2 class="headline">Every journey map ends up as a 60-rectangle Figma file — and breaks the moment anything changes.</h2>
+      <div class="figure">
+        <div class="figure-frame">
+          <div class="inner">
+            <div class="placeholder">Problem frame · before screenshot</div>
+          </div>
+        </div>
+      </div>
+      <div class="caption">
+        <p class="lead">The artifact is valuable. The way it's built is the problem.</p>
+        <p>Strategists I spoke with rebuild the same journey-map skeleton — stages across the top, dimensions down the side — from scratch for every project. Adding a stage means re-measuring rectangles. Switching from B2B SaaS to healthcare means rewriting the rows. The output reads great on a slide and collapses under the first revision.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 2 · RESEARCH (the interactive frameworks div lives here) -->
+  <section class="block" id="research">
+    <div class="container">
+      <span class="tag">Research</span>
+      <h2 class="headline">Three patterns — not "too many clicks" — that explain why.</h2>
+      <div class="figure">
+        <div class="figure-frame" style="padding: 24px;">
+          <div class="inner">
+            <div class="frameworks">
+              <div class="frameworks-tabs" role="tablist">
+                <button class="fw-tab active" data-fw="1" onclick="fwShow(1)">1 · Shape</button>
+                <button class="fw-tab" data-fw="2" onclick="fwShow(2)">2 · Reuse</button>
+                <button class="fw-tab" data-fw="3" onclick="fwShow(3)">3 · Revision</button>
+              </div>
+              <div class="fw-panel active" id="fw-1">
+                <div class="fw-label">Finding · Shape</div>
+                <div class="fw-title">Every journey map is the same grid. The content changes; the primitive doesn't.</div>
+                <div class="fw-body">Eleven strategists, eleven file structures — all resolving to stages × rows × cells. No one was building anything structurally new; they were redrawing the grid.</div>
+              </div>
+              <div class="fw-panel" id="fw-2">
+                <div class="fw-label">Finding · Reuse</div>
+                <div class="fw-title">Rows are the reusable unit. Stages are the thing strategists wrote from scratch.</div>
+                <div class="fw-body">"Thinking / Feeling / Doing" shows up in 8 of 11 files. But stages — because they're tied to the specific journey — never copied. Any tool that pre-writes stages in a generic way gets ignored.</div>
+              </div>
+              <div class="fw-panel" id="fw-3">
+                <div class="fw-label">Finding · Revision</div>
+                <div class="fw-title">Stakeholder feedback almost always rearranges — not rewrites — the map.</div>
+                <div class="fw-body">"Can we move onboarding before discovery?" "What if we split trial into two stages?" The operation is reordering, not editing copy. But in Figma, reordering means remeasuring every rectangle downstream.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="caption">
+        <p class="lead">Click through the tabs — the research is itself a tiny three-cell journey.</p>
+        <p>Synthesizing eleven interviews surfaced three patterns that each pointed at the same design move: treat the map as data, not a drawing. Shape tells us the primitive is universal. Reuse tells us what's worth pre-populating. Revision tells us the core operation is reordering — which maps cleanly onto array manipulation and nothing to do with pixel coordinates.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 3 · THE SHAPE -->
+  <section class="block" id="shape">
+    <div class="container">
+      <span class="tag">The Primitive</span>
+      <h2 class="headline">Stages × rows × cells — a flat grid that reorders in one array mutation.</h2>
+      <div class="figure">
+        <div class="figure-frame">
+          <div class="inner">
+            <div class="placeholder">Shape diagram · stages × rows × cells</div>
+          </div>
+        </div>
+      </div>
+      <div class="caption">
+        <p class="lead">The map is three arrays. Everything else — layout, theming, export — is a view on top of them.</p>
+        <p>A <code style="background:var(--border); padding:2px 6px; border-radius:4px; font-family:'JetBrains Mono',monospace; font-size:13px;">JourneyMap</code> is a JSON object with <em>stages</em>, <em>rows</em>, and flat <em>cells</em> that look up by <code style="background:var(--border); padding:2px 6px; border-radius:4px; font-family:'JetBrains Mono',monospace; font-size:13px;">(stageId, rowId)</code>. Adding a stage is pushing to the stages array. Reordering is swapping indices. The renderer is a dumb CSS grid that takes those arrays and draws them.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 4 · DESIGN -->
+  <section class="block" id="design">
+    <div class="container">
+      <span class="tag">Design</span>
+      <h2 class="headline">A canvas built for reordering, not drawing.</h2>
+      <div class="figure">
+        <div class="figure-frame">
+          <div class="inner">
+            <div class="placeholder">Canvas · journey map builder</div>
+          </div>
+        </div>
+      </div>
+      <div class="caption">
+        <p class="lead">Rows carry their own color lane. Cells inherit. The underlying grid is invisible until you need it.</p>
+        <p>Lanes are tokenized by <em>row kind</em> (behavior, emotion, opportunity, system) so a strategist can retheme the entire map by swapping a palette JSON. The grid lines are de-emphasized; the color language carries the structure visually.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 5 · AI COPILOT -->
+  <section class="block" id="copilot">
+    <div class="container">
+      <span class="tag">AI Copilot</span>
+      <h2 class="headline">"Move onboarding before discovery" is a tool call, not a click storm.</h2>
+      <div class="figure">
+        <div class="figure-frame">
+          <div class="inner">
+            <div class="placeholder">Arrange agent · natural language → map mutation</div>
+          </div>
+        </div>
+      </div>
+      <div class="caption">
+        <p class="lead">The arrange agent takes the current map + an instruction and returns a revised map — not a diff, the whole thing.</p>
+        <p>I used Claude's structured tool-use to define the map shape as the response schema. The model can only return a valid <code style="background:var(--border); padding:2px 6px; border-radius:4px; font-family:'JetBrains Mono',monospace; font-size:13px;">JourneyMap</code> — which means "illegal" edits (missing cells, broken row references) are impossible by construction. Preset chips in the toolbar ("flip emotion with behavior," "add a pre-awareness stage") hit the same endpoint.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 6 · THEMING -->
+  <section class="block" id="theming">
+    <div class="container">
+      <span class="tag">Theming</span>
+      <h2 class="headline">Every map ships with its own palette JSON — portable, reviewable, diff-able.</h2>
+      <div class="figure">
+        <div class="figure-frame">
+          <div class="inner">
+            <div class="placeholder">Theme editor · palette import/export</div>
+          </div>
+        </div>
+      </div>
+      <div class="caption">
+        <p class="lead">Teams can ship a house theme the same way they'd ship a design token file.</p>
+        <p>Chrome colors, canvas washes, glass, shadows, and per-row-kind lane colors are all driven by CSS variables on <code style="background:var(--border); padding:2px 6px; border-radius:4px; font-family:'JetBrains Mono',monospace; font-size:13px;">:root</code>. Import a <code style="background:var(--border); padding:2px 6px; border-radius:4px; font-family:'JetBrains Mono',monospace; font-size:13px;">theme.v1.json</code>, reset to defaults, or export a handoff bundle (map + theme + readme) as one file.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 7 · REFLECTIONS -->
+  <section class="block" id="reflections">
+    <div class="container">
+      <span class="tag">Reflections</span>
+      <h2 class="headline">What worked, what I'd rebuild, and what the primitive makes possible next.</h2>
+      <div class="figure">
+        <div class="figure-frame">
+          <div class="inner">
+            <div class="placeholder">Roadmap · what's next</div>
+          </div>
+        </div>
+      </div>
+      <div class="caption">
+        <p class="lead">Treating the map as data unlocked every feature I built after the first week.</p>
+        <p>Export, AI arrange, theming, drag-to-rearrange — none of them required touching the renderer. That's the payoff of a strong primitive. What I'd rebuild: the row-kind taxonomy is too tight. "Behavior" collapses three distinct things strategists actually care about (doing, deciding, switching). V2 breaks that apart. Next up: config-driven generation from a persona brief, and live customer-data inputs that auto-populate cells.</p>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="container">
+    <p>Adarsh Nellore · Selected Works · 2026</p>
+    <p><a href="#overview">Back to top</a></p>
+  </div>
+</footer>
+
+<script>
+  function fwShow(id) {
+    document.querySelectorAll('.fw-tab').forEach(t => t.classList.toggle('active', t.dataset.fw === String(id)));
+    document.querySelectorAll('.fw-panel').forEach(p => p.classList.toggle('active', p.id === 'fw-' + id));
+  }
+</script>
+
+</body>
+</html>
