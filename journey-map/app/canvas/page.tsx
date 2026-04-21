@@ -5,12 +5,10 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { Canvas } from "@/components/Canvas";
 import { Copilot } from "@/components/Copilot";
 import { CustomFrameworkDialog } from "@/components/CustomFrameworkDialog";
-import { FrameworkLibrary } from "@/components/FrameworkLibrary";
 import { TopBar } from "@/components/TopBar";
 import { ZoomControls } from "@/components/ZoomControls";
 import { BoardFrame } from "@/components/BoardFrame";
-import { BoardsPanel } from "@/components/BoardsPanel";
-import { ProjectsSwitcher } from "@/components/ProjectsSwitcher";
+import { WorkspaceMenu } from "@/components/WorkspaceMenu";
 import { CanvasContextMenuProvider } from "@/components/ui/CanvasContextMenu";
 import {
   getFramework,
@@ -57,28 +55,30 @@ function CanvasPageInner() {
   const activeBoard = useActiveBoard();
   const { projects } = useCanvas();
 
-  // First-time user (exactly one, empty, project) → send to the landing page
-  // which IS the "add your first board" surface. Users with multiple projects
-  // are allowed to sit on an empty project — switching back to it is a valid
-  // state, not a redirect trigger.
+  // First-time user (exactly one project, no boards, and that project's single
+  // canvas is also empty) → send to the landing page which IS the "add your
+  // first board" surface. Users with multiple projects are allowed to sit on
+  // an empty project — switching back to it is a valid state.
   useEffect(() => {
     if (!hydrated) return;
     if (boards.length > 0) return;
-    if (projects.length <= 1) {
-      router.replace("/");
-    }
-  }, [hydrated, boards.length, projects.length, router]);
-  const [libraryOpen, setLibraryOpen] = useState(false);
+    if (projects.length > 1) return;
+    const onlyProject = projects[0];
+    const totalBoards = onlyProject?.canvases.reduce(
+      (acc, c) => acc + c.boards.length,
+      0
+    ) ?? 0;
+    if (totalBoards > 0) return;
+    router.replace("/");
+  }, [hydrated, boards.length, projects, router]);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [, setBusy] = useState(false);
   const [generation, setGeneration] = useState<GenerateEvent<UniversalMap> | null>(null);
   const cancelGenerationRef = useRef<(() => void) | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const { fitToContent, x: panX, y: panY, scale } = useZoom();
 
   const activeFramework = activeBoard ? safelyGetFramework(activeBoard.frameworkId) : null;
-  const pendingForActive =
-    pending && activeBoard && pending.boardId === activeBoard.id ? pending : null;
 
   const generationActive =
     generation !== null && generation.phase !== "result" && generation.phase !== "error";
@@ -87,11 +87,6 @@ function CanvasPageInner() {
 
   const registerCancel = useCallback((cancel: (() => void) | null) => {
     cancelGenerationRef.current = cancel;
-  }, []);
-
-  const onGenerationCancel = useCallback(() => {
-    cancelGenerationRef.current?.();
-    setGeneration(null);
   }, []);
 
   // Fit the union of all boards to the viewport. Used on first mount and after
@@ -106,8 +101,6 @@ function CanvasPageInner() {
     );
   }, [fitToContent]);
 
-  // Re-fit whenever the number of boards changes (new board appears) or the
-  // active board changes to something out of view.
   const prevBoardsLen = useRef(boards.length);
   useLayoutEffect(() => {
     if (prevBoardsLen.current !== boards.length) {
@@ -123,12 +116,8 @@ function CanvasPageInner() {
   }, [fitAll]);
 
   // Keyboard shortcuts at the workspace level — one place, works across every
-  // framework layout (grid / kanban / matrix / freeform). The hierarchy is:
-  //   Cards ⊂ rows/cols ⊂ boards ⊂ canvas.
-  // Each shortcut dispatches to the finest-grained active level — if a card
-  // is selected, Cmd+D duplicates the card; no card but a row/col selected,
-  // it duplicates the row/col; neither but an active board, it duplicates
-  // the whole board.
+  // framework layout. The hierarchy is: Cards ⊂ rows/cols ⊂ boards ⊂ canvas.
+  // Each shortcut dispatches to the finest-grained active level.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const tag = (e.target as HTMLElement)?.tagName;
@@ -140,10 +129,7 @@ function CanvasPageInner() {
         return;
       }
 
-      // Cmd/Ctrl+D — duplicate at the finest active level.
       if ((e.metaKey || e.ctrlKey) && (e.key === "d" || e.key === "D")) {
-        // Always own the shortcut — otherwise the browser "bookmark" dialog
-        // opens whenever we'd have bailed below (no active board, etc.).
         e.preventDefault();
         if (!activeBoard || !activeFramework) return;
         const sel = activeBoard.selection as
@@ -200,7 +186,6 @@ function CanvasPageInner() {
           if (result.ok) updateBoardMap(activeBoard.id, result.map);
           return;
         }
-        // Nothing finer-grained selected — duplicate the whole board.
         duplicateBoard(activeBoard.id);
         return;
       }
@@ -213,6 +198,7 @@ function CanvasPageInner() {
           | { type: "row"; id: string }
           | null;
         if (sel) {
+          // Finest-grained delete — remove just the selection inside the board.
           e.preventDefault();
           type AnyOp = { op: string; [k: string]: unknown };
           const ops: AnyOp[] =
@@ -228,13 +214,20 @@ function CanvasPageInner() {
           }
           return;
         }
-        // No selection but Cmd/Ctrl+Delete on an active board removes it.
-        // Plain Delete without selection is a no-op — prevents accidental
-        // board nuking while panning around.
-        if ((e.metaKey || e.ctrlKey) && activeBoard) {
-          e.preventDefault();
+        // No sub-selection → board is the delete target. Plain Delete needs a
+        // confirm to prevent accidental board loss while panning (the user may
+        // not realize the board is still "active" after clicking in the canvas
+        // margins). Cmd/Ctrl+Delete is the power-user path and skips the
+        // confirm — same intent, keyboard-committed.
+        e.preventDefault();
+        if (e.metaKey || e.ctrlKey) {
           removeBoard(activeBoard.id);
+          return;
         }
+        const ok = window.confirm(
+          `Delete board "${activeBoard.title || "Untitled"}"? This cannot be undone.`
+        );
+        if (ok) removeBoard(activeBoard.id);
       }
     }
     window.addEventListener("keydown", onKey);
@@ -249,12 +242,6 @@ function CanvasPageInner() {
     duplicateBoard,
     removeBoard,
   ]);
-
-  // Theme hydration lives on each BoardFrame now (see hydrateBoardTheme in
-  // BoardFrame.tsx). Applying to document.documentElement here would re-paint
-  // the whole app chrome — copilot, sidebar, landing nav — which is not what
-  // the user wants. Themes should read "like a poster applied to the board"
-  // and leave the rest of the app alone.
 
   const onTitleChange = useCallback(
     (title: string) => {
@@ -295,21 +282,10 @@ function CanvasPageInner() {
 
   const allFrameworks = listFrameworks();
 
-  // Single-project empty state → the redirect effect above sends us to the
-  // landing page, so render nothing for a beat rather than flashing chrome.
-  // Multi-project empty state (user created a new blank project) → render the
-  // canvas chrome with an inline CTA so the user has a way to add a board
-  // instead of staring at a blank screen.
   if (hydrated && boards.length === 0 && projects.length <= 1) {
     return <div className="fixed inset-0" />;
   }
 
-  // Clicking blank canvas space deactivates the current board AND clears its
-  // selection — otherwise the selection toolbar lingers after the user has
-  // visibly clicked away. Skip any click that lands inside a board, any
-  // floating chrome (copilot, topbar, zoom controls, library toggle), or an
-  // interactive form control — otherwise typing in the copilot would silently
-  // unselect the board.
   function onCanvasBackgroundClick(e: React.MouseEvent) {
     const target = e.target as HTMLElement;
     if (target.closest("[data-board-frame]")) return;
@@ -318,6 +294,14 @@ function CanvasPageInner() {
     if (activeBoardId) setBoardSelection(activeBoardId, null);
     setActiveBoardId(null);
   }
+
+  const copilotDisabled =
+    !activeBoard ||
+    !activeFramework ||
+    // Archetype boards are view-only until ops-over-archetype-doc ships —
+    // universal apply_operations can't speak TableDoc / CartesianDoc / etc.
+    Boolean(activeBoard?.archetypeId);
+  const frameworkOptions = allFrameworks.map((fw) => ({ id: fw.id, label: fw.label }));
 
   return (
     <div className="fixed inset-0" onPointerDown={onCanvasBackgroundClick}>
@@ -329,22 +313,11 @@ function CanvasPageInner() {
               className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-center"
             >
               <div className="text-[15px] text-ink-secondary mb-1">
-                This project is empty.
+                This canvas is empty.
               </div>
-              <div className="text-[13px] text-ink-muted mb-4">
-                Add a board to get started.
+              <div className="text-[13px] text-ink-muted">
+                Use the Copilot on the right to pick or generate a framework.
               </div>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setLibraryOpen(true);
-                }}
-                className="inline-flex items-center gap-2 rounded-xl bg-ink-primary px-4 py-2 text-[13px] font-medium text-white hover:bg-ink-primary/90 transition"
-              >
-                <span aria-hidden>⊞</span>
-                Add from library
-              </button>
             </div>
           )}
           {boards.map((board) => (
@@ -375,40 +348,6 @@ function CanvasPageInner() {
         </div>
       </Canvas>
 
-      {/* Library toggle — fixed bottom-left. Opens the same pill picker as the
-          landing, but here clicking a framework creates a new board beside the
-          current ones rather than replacing the active board. */}
-      <div className="fixed bottom-4 left-4 z-40" data-floating>
-        <button
-          onClick={() => setLibraryOpen((o) => !o)}
-          className="glass rounded-xl px-3 py-2 text-[12px] font-medium text-ink-primary inline-flex items-center gap-2 hover:bg-white/90 transition"
-        >
-          <span className="text-ink-muted">⊞</span>
-          Add from library
-        </button>
-      </div>
-
-      {libraryOpen && (
-        <div
-          data-floating
-          className="fixed bottom-16 left-4 z-40 w-[320px] max-h-[70vh] overflow-y-auto glass rounded-2xl p-4"
-        >
-          <FrameworkLibrary
-            compact
-            selectedId={null}
-            onSelect={(id) => {
-              if (id === null) {
-                setDialogOpen(true);
-                setLibraryOpen(false);
-                return;
-              }
-              addBoardFromTemplate(id);
-              setLibraryOpen(false);
-            }}
-          />
-        </div>
-      )}
-
       <CustomFrameworkDialog
         open={dialogOpen}
         onClose={() => setDialogOpen(false)}
@@ -416,77 +355,107 @@ function CanvasPageInner() {
         existingIds={allFrameworks.map((fw) => fw.id)}
       />
 
-      {/* TopBar + Copilot are bound to the ACTIVE board. If nothing is active,
-          they render nothing meaningful — user clicks a board first. */}
+      {/* TopBar is still bound to the active board — it shows the board title
+          and export controls. Without an active board there is nothing to put
+          there, so we only mount it when a board is active. */}
       {activeBoard && activeFramework && (
-        <>
-          <TopBar
-            title={activeBoard.map.title ?? activeBoard.title ?? ""}
-            onTitleChange={onTitleChange}
-            map={activeBoard.map}
-            exportLocked={generationActive}
-          />
-
-          <Copilot
-            frameworkId={activeFramework.id}
-            frameworkLabel={activeFramework.label}
-            frameworkConfig={activeFramework.config}
-            customConfig={isDynamicFramework(activeFramework.id) ? activeFramework.config : undefined}
-            frameworkSubtitle={activeFramework.config.chatSubtitle}
-            chatPlaceholder={activeFramework.config.chatPlaceholder}
-            frameworkOptions={allFrameworks.map((fw) => ({ id: fw.id, label: fw.label }))}
-            onFrameworkChange={(nextId) => {
-              // Changing the active board's framework — reseed the map. This
-              // matches the pre-refactor UX; down the line we may want to ask
-              // before clobbering a populated board.
-              const next = allFrameworks.find((fw) => fw.id === nextId);
-              if (!next || !activeBoard) return;
-              updateBoardMap(activeBoard.id, next.seed);
-            }}
-            map={activeBoard.map}
-            onMapChange={(next) => updateBoardMap(activeBoard.id, next)}
-            applyOps={activeFramework.applyOps}
-            exampleInstructions={activeFramework.exampleInstructions}
-            onBusyChange={setBusy}
-            focus={activeBoard.selection}
-            onFocusClear={() => setBoardSelection(activeBoard.id, null)}
-            onGenerationProgress={setGeneration}
-            registerGenerationCancel={registerCancel}
-            boardAttachments={activeBoard.attachments ?? []}
-            onAttachFile={(f) => attachFileToBoard(activeBoard.id, f).then(() => {})}
-            onRemoveAttachment={(id) => removeAttachment(activeBoard.id, id)}
-            loadPersistedFiles={async () => {
-              const metas = activeBoard.attachments ?? [];
-              const out: File[] = [];
-              for (const m of metas) {
-                try {
-                  const f = await getAttachmentAsFile(activeBoard.id, m.id, m.name, m.mediaType);
-                  if (f) out.push(f);
-                } catch {
-                  /* skip missing / unreadable */
-                }
-              }
-              return out;
-            }}
-          />
-        </>
+        <TopBar
+          title={activeBoard.map.title ?? activeBoard.title ?? ""}
+          onTitleChange={onTitleChange}
+          map={activeBoard.map}
+          exportLocked={generationActive}
+        />
       )}
 
-      <ProjectsSwitcher />
-
-      <BoardsPanel
-        boards={boards}
-        activeBoardId={activeBoardId}
-        pendingBoardId={pending?.boardId ?? null}
-        onActivate={setActiveBoardId}
+      {/* Copilot is persistent. When there's no active board or framework it
+          renders in its disabled/empty state — greyed chrome + library/generate
+          entry surfaced as the body so the user can get unstuck without
+          hunting for another button. */}
+      <Copilot
+        frameworkId={activeFramework?.id ?? null}
+        frameworkLabel={
+          activeBoard?.archetypeId
+            ? `${activeBoard.archetypeId} (view-only)`
+            : (activeFramework?.label ?? "No framework")
+        }
+        frameworkConfig={activeFramework?.config}
+        customConfig={
+          activeFramework && isDynamicFramework(activeFramework.id)
+            ? activeFramework.config
+            : undefined
+        }
+        frameworkSubtitle={activeFramework?.config.chatSubtitle}
+        chatPlaceholder={activeFramework?.config.chatPlaceholder}
+        frameworkOptions={frameworkOptions}
+        onFrameworkChange={(nextId) => {
+          const next = allFrameworks.find((fw) => fw.id === nextId);
+          if (!next || !activeBoard) {
+            addBoardFromTemplate(nextId);
+            return;
+          }
+          updateBoardMap(activeBoard.id, next.seed);
+        }}
+        onAddFromLibrary={addBoardFromTemplate}
+        onOpenCustomDialog={() => setDialogOpen(true)}
+        map={activeBoard?.map ?? null}
+        onMapChange={(next) => {
+          if (activeBoard) updateBoardMap(activeBoard.id, next);
+        }}
+        applyOps={
+          activeFramework
+            ? activeFramework.applyOps
+            : // When disabled the composer is locked so applyOps is never invoked — but a
+              // function-shaped default keeps the type happy and avoids a null guard at
+              // every call site in Copilot.
+              (_m: unknown, _ops: unknown[]) => ({
+                ok: false as const,
+                reason: "disabled",
+              })
+        }
+        exampleInstructions={activeFramework?.exampleInstructions ?? []}
+        onBusyChange={setBusy}
+        focus={activeBoard?.selection ?? null}
+        onFocusClear={() => activeBoard && setBoardSelection(activeBoard.id, null)}
+        onGenerationProgress={setGeneration}
+        registerGenerationCancel={registerCancel}
+        boardAttachments={activeBoard?.attachments ?? []}
+        onAttachFile={
+          activeBoard
+            ? (f) => attachFileToBoard(activeBoard.id, f).then(() => {})
+            : undefined
+        }
+        onRemoveAttachment={
+          activeBoard ? (id) => removeAttachment(activeBoard.id, id) : undefined
+        }
+        loadPersistedFiles={
+          activeBoard
+            ? async () => {
+                const metas = activeBoard.attachments ?? [];
+                const out: File[] = [];
+                for (const m of metas) {
+                  try {
+                    const f = await getAttachmentAsFile(
+                      activeBoard.id,
+                      m.id,
+                      m.name,
+                      m.mediaType
+                    );
+                    if (f) out.push(f);
+                  } catch {
+                    /* skip missing / unreadable */
+                  }
+                }
+                return out;
+              }
+            : undefined
+        }
+        disabled={copilotDisabled}
       />
+
+      <WorkspaceMenu pendingBoardId={pending?.boardId ?? null} />
 
       <ZoomControls onFit={fitAll} />
 
-      {/* Bottom-center error toast for pending failures. Keyed off `pending`
-          (not `pendingForActive`) so it still renders when the failed board
-          was removed — otherwise the user sees nothing after a describe
-          error. Auto-dismisses on new input or explicit close. */}
       {pending?.error && (
         <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 glass rounded-xl px-4 py-3 pr-9 text-[13px] text-rose-900 bg-rose-50/80 border border-rose-100 max-w-md">
           {pending.error}
@@ -504,10 +473,6 @@ function CanvasPageInner() {
   );
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ──────────────────────────────────────────────────────────────────────────────
-
 function safelyGetFramework(id: string) {
   try {
     return getFramework(id);
@@ -516,9 +481,6 @@ function safelyGetFramework(id: string) {
   }
 }
 
-/** Canvas-space position for a new board, centered on the current viewport.
- *  Canvas coords = (screen - pan) / scale. Returns the top-left of a ~900x600
- *  board so its visual center lands near the viewport center. */
 function viewportCenterInCanvasCoords(
   panX: number,
   panY: number,
@@ -532,7 +494,6 @@ function viewportCenterInCanvasCoords(
   const halfH = 300;
   const x = (vw / 2 - panX) / scale - halfW;
   const y = (vh / 2 - panY) / scale - halfH;
-  // If this exact position is already very close to another board, nudge to avoid overlap.
   for (const b of existing) {
     if (Math.abs(b.x - x) < 80 && Math.abs(b.y - y) < 80) {
       return { x: b.x + 40, y: b.y + 40 };

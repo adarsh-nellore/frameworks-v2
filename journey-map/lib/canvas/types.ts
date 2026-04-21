@@ -37,10 +37,18 @@ export type Board = {
   /** Set only when frameworkId is dynamic (user-generated). Kept on the Board so
    *  the dynamic registry can be rehydrated on reload before boards mount. */
   customConfig?: FrameworkConfig;
+  /** When set, this board was produced by the archetype-first pipeline: the
+   *  runtime `map` holds the archetype's typed document (TableDoc, etc.) and
+   *  the renderer dispatches through the archetype's Component. `frameworkId`
+   *  becomes a placeholder and the universal registry is bypassed. */
+  archetypeId?: string;
   title: string;
   /** Canvas-space top-left in CSS pixels (pre-zoom). */
   x: number;
   y: number;
+  /** For universal boards, a `UniversalMap`. For archetype boards, the
+   *  archetype's typed document (see `archetypeId`). Typed as UniversalMap
+   *  at the boundary; renderers narrow at the seam. */
   map: UniversalMap;
   selection: UniversalSelection | null;
   status: BoardStatus;
@@ -52,12 +60,12 @@ export type Board = {
 };
 
 /**
- * A Project is a whiteboard: one workspace that owns its own set of boards
- * and its own current selection. Users can have many projects and switch
- * between them. Each project persists its boards and activeBoardId; creating
- * a new project yields an empty whiteboard without losing existing work.
+ * A Canvas is a single whiteboard surface that owns a set of boards and its
+ * own active board. Many canvases can live inside one Project — like Miro,
+ * where a "team" (project) holds many boards (canvases). Switching canvases
+ * within a project swaps the live boards without leaving the project.
  */
-export type Project = {
+export type Canvas = {
   id: string;
   name: string;
   createdAt: number;
@@ -65,16 +73,32 @@ export type Project = {
   activeBoardId: string | null;
 };
 
+/**
+ * A Project is a folder of canvases. Users can have many projects and each
+ * project holds one or more canvases. Creating a new project yields a single
+ * empty canvas so the user always has a surface to work on.
+ */
+export type Project = {
+  id: string;
+  name: string;
+  createdAt: number;
+  canvases: Canvas[];
+  activeCanvasId: string | null;
+};
+
 export type CanvasState = {
   /** All projects the user has in localStorage. Always ≥ 1 after hydration —
-   *  if storage is empty, a "Default project" is created on boot. */
+   *  if storage is empty, a "My project" is seeded on boot. */
   projects: Project[];
   /** The currently-visible project. Always points at an existing project. */
   activeProjectId: string | null;
-  /** Boards of the active project, surfaced at the top level for backward
-   *  compat with every existing consumer (BoardFrame, TopBar, Copilot, etc.). */
+  /** The currently-visible canvas within the active project. */
+  activeCanvasId: string | null;
+  /** Boards of the active canvas (within the active project), surfaced at the
+   *  top level so every existing consumer (BoardFrame, TopBar, Copilot, etc.)
+   *  keeps the same API. */
   boards: Board[];
-  /** activeBoardId of the active project. */
+  /** activeBoardId of the active canvas. */
   activeBoardId: string | null;
   hydrated: boolean;
 };

@@ -20,7 +20,14 @@ import {
   saveCustomFramework,
 } from "@/lib/frameworks/custom/registry";
 import { parseSseFrames, type GenerateEvent } from "@/lib/pipeline/events";
-import type { AttachmentMeta, Board, BoardStatus, CanvasState, Project } from "./types";
+import type {
+  AttachmentMeta,
+  Board,
+  BoardStatus,
+  Canvas,
+  CanvasState,
+  Project,
+} from "./types";
 import { loadCanvasState, saveCanvasState } from "./storage";
 import {
   deleteAllForBoard,
@@ -31,13 +38,12 @@ import {
 } from "./attachments-store";
 
 // ──────────────────────────────────────────────────────────────────────────────
-// CanvasContext — state + streaming generation for the multi-board workspace.
+// CanvasContext — state + streaming generation for the multi-project workspace.
 //
-// Mounted once at app/layout.tsx so state survives navigation between "/" (the
-// prompt landing) and "/canvas" (the workspace). The landing calls
-// addBoard() + startDescribe()/startGenerate() and navigates immediately —
-// the stream keeps running in this provider while the user watches the
-// skeleton/overlay on /canvas.
+// Hierarchy: Project → Canvas → Board. A project owns one or more canvases;
+// each canvas owns its own boards. The root `boards` / `activeBoardId` state
+// surfaces the *active canvas within the active project* — every existing
+// consumer (BoardFrame, Copilot, TopBar, etc.) keeps the same API.
 // ──────────────────────────────────────────────────────────────────────────────
 
 type AddBoardInput = {
@@ -79,11 +85,19 @@ type CanvasContextValue = CanvasState & {
   setBoardSelection: (id: string, selection: UniversalSelection | null) => void;
   setActiveBoardId: (id: string | null) => void;
 
-  /** Multi-project API — each project is its own whiteboard. */
+  /** Multi-project API. */
   createProject: (name?: string) => Project;
   renameProject: (id: string, name: string) => void;
   deleteProject: (id: string) => void;
   switchProject: (id: string) => void;
+
+  /** Multi-canvas API — canvases live inside projects. createCanvas defaults
+   *  to the active project; switchCanvas targets any canvas in the active
+   *  project. */
+  createCanvas: (name?: string, projectId?: string) => Canvas;
+  renameCanvas: (canvasId: string, name: string) => void;
+  removeCanvas: (canvasId: string) => void;
+  switchCanvas: (canvasId: string) => void;
 
   /** Persist a file as an attachment on the given board. Returns the metadata
    *  entry written to board state (useful if the caller wants to await the
@@ -92,9 +106,7 @@ type CanvasContextValue = CanvasState & {
   /** Remove an attachment from both localStorage metadata and IDB bytes. */
   removeAttachment: (boardId: string, attachmentId: string) => Promise<void>;
 
-  /** Kick off a describe call for an existing (pending-describe) board.
-   *  Optional sources are ingested server-side (URLs via Jina, files via the
-   *  shared extraction pipeline) and passed to the synthesis prompt. */
+  /** Kick off a describe call for an existing (pending-describe) board. */
   startDescribe: (
     boardId: string,
     description: string,
@@ -120,13 +132,28 @@ function genProjectId(): string {
   return `p-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`;
 }
 
-function makeEmptyProject(name: string = "Untitled project"): Project {
+function genCanvasId(): string {
+  return `c-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`;
+}
+
+function makeEmptyCanvas(name: string = "Canvas 1"): Canvas {
   return {
-    id: genProjectId(),
+    id: genCanvasId(),
     name,
     createdAt: Date.now(),
     boards: [],
     activeBoardId: null,
+  };
+}
+
+function makeEmptyProject(name: string = "Untitled project"): Project {
+  const canvas = makeEmptyCanvas("Canvas 1");
+  return {
+    id: genProjectId(),
+    name,
+    createdAt: Date.now(),
+    canvases: [canvas],
+    activeCanvasId: canvas.id,
   };
 }
 
@@ -140,26 +167,60 @@ function nextOpenX(boards: Board[]): number {
   return maxRight + 120;
 }
 
+/** Produce a fresh snapshot of the projects array with the given
+ *  (project, canvas)'s boards and activeBoardId replaced by the live values.
+ *  Used at persist-time and before any switch operation to freeze in-memory
+ *  edits back into the tree before we swap to a different canvas or project. */
+function freezeBoardsInto(
+  projects: Project[],
+  projectId: string | null,
+  canvasId: string | null,
+  boards: Board[],
+  activeBoardId: string | null
+): Project[] {
+  if (!projectId || !canvasId) return projects;
+  return projects.map((p) =>
+    p.id === projectId
+      ? {
+          ...p,
+          canvases: p.canvases.map((c) =>
+            c.id === canvasId ? { ...c, boards, activeBoardId } : c
+          ),
+        }
+      : p
+  );
+}
+
+/** "Recovered" copy of a board list: drops any pending-* states left over
+ *  from a prior session back to "ready" (the fetch is long gone by the time
+ *  we hydrate) and registers any dynamic framework configs carried on them. */
+function recoverBoards(boards: Board[]): Board[] {
+  for (const b of boards) {
+    if (b.customConfig && !isDynamicFramework(b.customConfig.id)) {
+      registerDynamicFramework(b.customConfig);
+    }
+  }
+  return boards.map((b) =>
+    b.status === "pending-describe" || b.status === "pending-generate"
+      ? { ...b, status: "ready" as BoardStatus }
+      : b
+  );
+}
+
 export function CanvasProvider({ children }: { children: React.ReactNode }) {
-  // The active project's boards are surfaced as the root `boards` state — every
-  // existing consumer (BoardFrame, Copilot, TopBar, etc.) keeps the same API.
-  // Switching projects swaps this state with the other project's boards.
+  // Live state of the active canvas within the active project.
   const [boards, setBoards] = useState<Board[]>([]);
   const [activeBoardId, setActive] = useState<string | null>(null);
-  // Project registry. Each project stores its OWN boards + activeBoardId; the
-  // entry for the currently-active project is treated as the source of truth
-  // for that project when switching in/out. While a project is active, the
-  // root `boards`/`activeBoardId` state takes precedence for that project.
   const [projects, setProjects] = useState<Project[]>([]);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const [activeCanvasId, setActiveCanvasId] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
   const [persistError, setPersistError] = useState<null | "quota" | "unknown">(null);
   const [pending, setPending] = useState<PendingGenerate | null>(null);
   const pendingAbortRef = useRef<AbortController | null>(null);
   const hydratedRef = useRef(false);
-  // Mirror of `boards` readable inside long-lived callbacks (startDescribe /
-  // startGenerate) without adding `boards` as a dep and recreating the
-  // callback every board edit.
+  // Mirrors of live state readable inside long-lived callbacks without
+  // re-creating them on every edit.
   const boardsRef = useRef<Board[]>(boards);
   useEffect(() => {
     boardsRef.current = boards;
@@ -168,6 +229,14 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     activeProjectIdRef.current = activeProjectId;
   }, [activeProjectId]);
+  const activeCanvasIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    activeCanvasIdRef.current = activeCanvasId;
+  }, [activeCanvasId]);
+  const activeBoardIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    activeBoardIdRef.current = activeBoardId;
+  }, [activeBoardId]);
 
   useEffect(() => {
     const customs = loadCustomFrameworks();
@@ -175,57 +244,66 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
 
     const loaded = loadCanvasState();
     let projectsOut: Project[];
-    let activeId: string;
+    let activeProj: Project;
     if (loaded.ok && loaded.projects.length > 0) {
       projectsOut = loaded.projects;
-      activeId = loaded.activeProjectId ?? loaded.projects[0].id;
+      activeProj =
+        projectsOut.find((p) => p.id === loaded.activeProjectId) ??
+        projectsOut[0];
     } else {
-      // Fresh install — seed a single empty project so the app always has one.
       const first = makeEmptyProject("My project");
       projectsOut = [first];
-      activeId = first.id;
+      activeProj = first;
     }
-
-    // Pick the active project's boards, rehydrate dynamic configs, and repair
-    // any pending-* states left over from a prior session (the fetch is long
-    // gone, so downgrade to "ready" with whatever seed the board already has).
-    const active = projectsOut.find((p) => p.id === activeId) ?? projectsOut[0];
-    for (const b of active.boards) {
-      if (b.customConfig && !isDynamicFramework(b.customConfig.id)) {
-        registerDynamicFramework(b.customConfig);
-      }
-    }
-    const recovered: Board[] = active.boards.map((b) =>
-      b.status === "pending-describe" || b.status === "pending-generate"
-        ? { ...b, status: "ready" as BoardStatus }
-        : b
+    // Guarantee every project has at least one canvas — defensive against
+    // hand-edited localStorage or partial migrations.
+    projectsOut = projectsOut.map((p) =>
+      p.canvases.length === 0
+        ? {
+            ...p,
+            canvases: [makeEmptyCanvas("Canvas 1")],
+            activeCanvasId: null,
+          }
+        : p
     );
+    // Re-find activeProj in the normalized array so we don't reference the
+    // pre-normalized object.
+    activeProj =
+      projectsOut.find((p) => p.id === activeProj.id) ?? projectsOut[0];
+    const activeCanvas =
+      activeProj.canvases.find((c) => c.id === activeProj.activeCanvasId) ??
+      activeProj.canvases[0];
+
+    const recovered = recoverBoards(activeCanvas.boards);
 
     setProjects(projectsOut);
-    setActiveProjectId(active.id);
+    setActiveProjectId(activeProj.id);
+    setActiveCanvasId(activeCanvas.id);
     setBoards(recovered);
-    setActive(active.activeBoardId);
+    setActive(activeCanvas.activeBoardId);
     hydratedRef.current = true;
     setHydrated(true);
   }, []);
 
-  // Persist-on-change. We always write the ACTIVE project's boards into its
-  // entry in `projects` before serializing — keeps the on-disk shape a pure
-  // reflection of in-memory state regardless of which project is open.
+  // Persist-on-change. Always write live boards back into the active
+  // (project, canvas) entry before serializing so on-disk shape mirrors
+  // in-memory state.
   useEffect(() => {
     if (!hydratedRef.current) return;
     if (persistError) return;
-    if (!activeProjectId) return;
-    const snapshot = projects.map((p) =>
-      p.id === activeProjectId ? { ...p, boards, activeBoardId } : p
+    if (!activeProjectId || !activeCanvasId) return;
+    const snapshot = freezeBoardsInto(
+      projects,
+      activeProjectId,
+      activeCanvasId,
+      boards,
+      activeBoardId
     );
     const result = saveCanvasState(snapshot, activeProjectId);
     if (!result.ok) setPersistError(result.reason);
-    // Also mirror the snapshot back into state so in-memory `projects` reflects
-    // the latest boards — needed for the switcher UI's board counts.
     setProjects(snapshot);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [boards, activeBoardId, activeProjectId, persistError]);
+  }, [boards, activeBoardId, activeProjectId, activeCanvasId, persistError]);
 
   const addBoard = useCallback((input: AddBoardInput): Board => {
     const id = genId();
@@ -262,7 +340,6 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
   const removeBoard = useCallback((id: string) => {
     setBoards((prev) => prev.filter((b) => b.id !== id));
     setActive((curr) => (curr === id ? null : curr));
-    // Fire-and-forget: IDB cleanup shouldn't block UI removal.
     void deleteAllForBoard(id).catch(() => {
       /* non-fatal — orphan blobs are harmless, just slightly wasteful */
     });
@@ -271,8 +348,6 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
   const duplicateBoard = useCallback((id: string): Board | null => {
     const src = boards.find((b) => b.id === id);
     if (!src) return null;
-    // Drop attachments on duplicate. Copying IDB bytes for every duplicate
-    // would balloon storage; the user can re-attach to the copy if needed.
     const copy: Board = {
       ...src,
       id: genId(),
@@ -367,89 +442,205 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
     setPending(null);
   }, []);
 
+  // Cancel any in-flight stream before leaving a canvas or project — keeping
+  // it running against a hidden surface leads to surprising state changes
+  // when the user switches back.
+  const abortIfPending = useCallback(() => {
+    if (pendingAbortRef.current) {
+      pendingAbortRef.current.abort();
+      pendingAbortRef.current = null;
+    }
+    setPending(null);
+  }, []);
+
+  // ── Canvas management ─────────────────────────────────────────────────────
+
+  const switchCanvas = useCallback((nextCanvasId: string) => {
+    const projectId = activeProjectIdRef.current;
+    const currentCanvasId = activeCanvasIdRef.current;
+    if (!projectId) return;
+    if (currentCanvasId === nextCanvasId) return;
+    abortIfPending();
+    setProjects((prev) => {
+      // Freeze live boards into the current canvas before we swap.
+      const frozen = freezeBoardsInto(
+        prev,
+        projectId,
+        currentCanvasId,
+        boardsRef.current,
+        activeBoardIdRef.current
+      );
+      const project = frozen.find((p) => p.id === projectId);
+      const target = project?.canvases.find((c) => c.id === nextCanvasId);
+      if (!project || !target) return frozen;
+      const recovered = recoverBoards(target.boards);
+      setBoards(recovered);
+      setActive(target.activeBoardId);
+      setActiveCanvasId(nextCanvasId);
+      // Also remember the new active canvas on the project itself.
+      return frozen.map((p) =>
+        p.id === projectId ? { ...p, activeCanvasId: nextCanvasId } : p
+      );
+    });
+  }, [abortIfPending]);
+
+  const createCanvas = useCallback(
+    (name?: string, projectId?: string): Canvas => {
+      const targetProjectId = projectId ?? activeProjectIdRef.current;
+      if (!targetProjectId) {
+        throw new Error("createCanvas: no active project");
+      }
+      const canvas = makeEmptyCanvas(name?.trim() || "Untitled canvas");
+      const isActiveProject = targetProjectId === activeProjectIdRef.current;
+      abortIfPending();
+      setProjects((prev) => {
+        // Freeze current canvas first (if we're adding into the active project).
+        const frozen = isActiveProject
+          ? freezeBoardsInto(
+              prev,
+              targetProjectId,
+              activeCanvasIdRef.current,
+              boardsRef.current,
+              activeBoardIdRef.current
+            )
+          : prev;
+        return frozen.map((p) =>
+          p.id === targetProjectId
+            ? {
+                ...p,
+                canvases: [...p.canvases, canvas],
+                activeCanvasId: isActiveProject ? canvas.id : p.activeCanvasId,
+              }
+            : p
+        );
+      });
+      if (isActiveProject) {
+        setBoards([]);
+        setActive(null);
+        setActiveCanvasId(canvas.id);
+      }
+      return canvas;
+    },
+    [abortIfPending]
+  );
+
+  const renameCanvas = useCallback((canvasId: string, name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setProjects((prev) =>
+      prev.map((p) => ({
+        ...p,
+        canvases: p.canvases.map((c) =>
+          c.id === canvasId ? { ...c, name: trimmed } : c
+        ),
+      }))
+    );
+  }, []);
+
+  const removeCanvas = useCallback(
+    (canvasId: string) => {
+      setProjects((prev) => {
+        // Find the owning project so we can delete IDB blobs for its boards.
+        const owner = prev.find((p) =>
+          p.canvases.some((c) => c.id === canvasId)
+        );
+        if (!owner) return prev;
+        const canvas = owner.canvases.find((c) => c.id === canvasId);
+        if (canvas) {
+          for (const b of canvas.boards) {
+            void deleteAllForBoard(b.id).catch(() => {
+              /* non-fatal */
+            });
+          }
+        }
+        // Never leave a project with zero canvases — seed an empty one.
+        const replacement: Canvas[] =
+          owner.canvases.length === 1
+            ? [makeEmptyCanvas("Canvas 1")]
+            : owner.canvases.filter((c) => c.id !== canvasId);
+        const next = prev.map((p) =>
+          p.id === owner.id
+            ? {
+                ...p,
+                canvases: replacement,
+                activeCanvasId:
+                  p.activeCanvasId === canvasId
+                    ? replacement[0]?.id ?? null
+                    : p.activeCanvasId,
+              }
+            : p
+        );
+        // If the removed canvas was live, swap into its replacement.
+        if (
+          owner.id === activeProjectIdRef.current &&
+          canvasId === activeCanvasIdRef.current
+        ) {
+          abortIfPending();
+          const freshActive = replacement[0];
+          setBoards(recoverBoards(freshActive.boards));
+          setActive(freshActive.activeBoardId);
+          setActiveCanvasId(freshActive.id);
+        }
+        return next;
+      });
+    },
+    [abortIfPending]
+  );
+
   // ── Project management ─────────────────────────────────────────────────────
-  //
-  // Switching projects swaps the live boards/activeBoardId state. Before the
-  // swap, we freeze the current project's state back into the projects array.
-  // An in-flight describe/generate is cancelled on switch — keeping the stream
-  // running against a hidden project would surface surprising state changes
-  // once the user switched back.
 
   const switchProject = useCallback(
     (nextId: string) => {
+      const currentId = activeProjectIdRef.current;
+      if (currentId === nextId) return;
+      abortIfPending();
       setProjects((prev) => {
-        // Freeze current project's live boards back into its entry
-        const currentId = activeProjectIdRef.current;
-        const frozen = currentId
-          ? prev.map((p) =>
-              p.id === currentId
-                ? { ...p, boards: boardsRef.current, activeBoardId }
-                : p
-            )
-          : prev;
+        const frozen = freezeBoardsInto(
+          prev,
+          currentId,
+          activeCanvasIdRef.current,
+          boardsRef.current,
+          activeBoardIdRef.current
+        );
+        const target = frozen.find((p) => p.id === nextId);
+        if (!target) return frozen;
+        const targetCanvas =
+          target.canvases.find((c) => c.id === target.activeCanvasId) ??
+          target.canvases[0];
+        if (!targetCanvas) return frozen;
+        const recovered = recoverBoards(targetCanvas.boards);
+        setBoards(recovered);
+        setActive(targetCanvas.activeBoardId);
+        setActiveProjectId(nextId);
+        setActiveCanvasId(targetCanvas.id);
         return frozen;
       });
-      // Cancel any in-flight agent stream belonging to the project we're
-      // leaving. The abort controller will unwedge the pending board.
-      if (pendingAbortRef.current) {
-        pendingAbortRef.current.abort();
-        pendingAbortRef.current = null;
-      }
-      setPending(null);
-      // Load target project's boards into live state.
-      setProjects((prev) => {
-        const target = prev.find((p) => p.id === nextId);
-        if (!target) return prev;
-        // Register any dynamic configs carried by the target project so their
-        // framework.Component resolves the moment we render the boards.
-        for (const b of target.boards) {
-          if (b.customConfig && !isDynamicFramework(b.customConfig.id)) {
-            registerDynamicFramework(b.customConfig);
-          }
-        }
-        const recovered: Board[] = target.boards.map((b) =>
-          b.status === "pending-describe" || b.status === "pending-generate"
-            ? { ...b, status: "ready" as BoardStatus }
-            : b
-        );
-        setBoards(recovered);
-        setActive(target.activeBoardId);
-        setActiveProjectId(nextId);
-        return prev;
-      });
     },
-    [activeBoardId]
+    [abortIfPending]
   );
 
   const createProject = useCallback(
     (name?: string): Project => {
       const project = makeEmptyProject(name?.trim() || "Untitled project");
-      // Freeze current first so the newly-persisted snapshot includes it with
-      // correct boards, then append the new empty project + switch to it.
+      const firstCanvas = project.canvases[0];
+      abortIfPending();
       setProjects((prev) => {
-        const currentId = activeProjectIdRef.current;
-        const frozen = currentId
-          ? prev.map((p) =>
-              p.id === currentId
-                ? { ...p, boards: boardsRef.current, activeBoardId }
-                : p
-            )
-          : prev;
+        const frozen = freezeBoardsInto(
+          prev,
+          activeProjectIdRef.current,
+          activeCanvasIdRef.current,
+          boardsRef.current,
+          activeBoardIdRef.current
+        );
         return [...frozen, project];
       });
-      // Cancel any in-flight agent stream from the previous project.
-      if (pendingAbortRef.current) {
-        pendingAbortRef.current.abort();
-        pendingAbortRef.current = null;
-      }
-      setPending(null);
-      // Load the new (empty) project as the live one.
       setBoards([]);
       setActive(null);
       setActiveProjectId(project.id);
+      setActiveCanvasId(firstCanvas.id);
       return project;
     },
-    [activeBoardId]
+    [abortIfPending]
   );
 
   const renameProject = useCallback((id: string, name: string) => {
@@ -460,56 +651,42 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
     );
   }, []);
 
-  const deleteProject = useCallback(
-    (id: string) => {
-      // Clean up all IDB attachments for every board in the project.
-      setProjects((prev) => {
-        const project = prev.find((p) => p.id === id);
-        if (project) {
-          for (const b of project.boards) {
+  const deleteProject = useCallback((id: string) => {
+    setProjects((prev) => {
+      const project = prev.find((p) => p.id === id);
+      if (project) {
+        for (const canvas of project.canvases) {
+          for (const b of canvas.boards) {
             void deleteAllForBoard(b.id).catch(() => {
               /* non-fatal */
             });
           }
         }
-        const next = prev.filter((p) => p.id !== id);
-        // If the active project was deleted, switch to the first remaining —
-        // or create a new empty "Untitled project" so the user never lands in
-        // a state with zero projects.
-        if (activeProjectIdRef.current === id) {
-          if (pendingAbortRef.current) {
-            pendingAbortRef.current.abort();
-            pendingAbortRef.current = null;
-          }
-          setPending(null);
-          if (next.length === 0) {
-            const fresh = makeEmptyProject("My project");
-            setBoards([]);
-            setActive(null);
-            setActiveProjectId(fresh.id);
-            return [fresh];
-          }
-          const fallback = next[0];
-          for (const b of fallback.boards) {
-            if (b.customConfig && !isDynamicFramework(b.customConfig.id)) {
-              registerDynamicFramework(b.customConfig);
-            }
-          }
-          setBoards(
-            fallback.boards.map((b) =>
-              b.status === "pending-describe" || b.status === "pending-generate"
-                ? { ...b, status: "ready" as BoardStatus }
-                : b
-            )
-          );
-          setActive(fallback.activeBoardId);
-          setActiveProjectId(fallback.id);
+      }
+      const remaining = prev.filter((p) => p.id !== id);
+      if (activeProjectIdRef.current === id) {
+        abortIfPending();
+        if (remaining.length === 0) {
+          const fresh = makeEmptyProject("My project");
+          const firstCanvas = fresh.canvases[0];
+          setBoards([]);
+          setActive(null);
+          setActiveProjectId(fresh.id);
+          setActiveCanvasId(firstCanvas.id);
+          return [fresh];
         }
-        return next;
-      });
-    },
-    []
-  );
+        const fallback = remaining[0];
+        const fallbackCanvas =
+          fallback.canvases.find((c) => c.id === fallback.activeCanvasId) ??
+          fallback.canvases[0];
+        setBoards(recoverBoards(fallbackCanvas.boards));
+        setActive(fallbackCanvas.activeBoardId);
+        setActiveProjectId(fallback.id);
+        setActiveCanvasId(fallbackCanvas.id);
+      }
+      return remaining;
+    });
+  }, [abortIfPending]);
 
   // ── Streaming actions ───────────────────────────────────────────────────────
   const startDescribe = useCallback(
@@ -524,8 +701,6 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
       const ac = new AbortController();
       pendingAbortRef.current = ac;
       try {
-        // Rehydrate any attachments persisted on the board — so if the user
-        // attaches first and later re-runs describe, the saved docs feed in.
         const persistedFiles = await loadBoardAttachmentsAsFiles(
           boardId,
           boardsRef.current
@@ -560,10 +735,8 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
         }
         const config = data.config as FrameworkConfig;
         const populatedMap = data.populatedMap as UniversalMap;
-        // Register the synthesized config + persist
         if (!isDynamicFramework(config.id)) registerDynamicFramework(config);
         saveCustomFramework(config);
-        // Upgrade the pending board to ready
         setBoards((prev) =>
           prev.map((b) =>
             b.id === boardId
@@ -579,9 +752,6 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
               : b
           )
         );
-        // Surface populate-stage warnings as a visible error on the canvas.
-        // When populate fails silently the framework shell lands but cards are
-        // empty — without this the user has no idea why.
         const warnings = Array.isArray(data.warnings)
           ? (data.warnings as unknown[]).filter(
               (w): w is string => typeof w === "string"
@@ -599,18 +769,12 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
         }
       } catch (e) {
         if (e instanceof DOMException && e.name === "AbortError") {
-          // User aborted (e.g. cancelled from UI, or closed the tab).
-          // Drop the placeholder board entirely — it has no usable structure
-          // and leaving it around produces the "empty, unclickable board"
-          // dead-end the user sees when recovery resurrects it post-reload.
           setBoards((prev) => prev.filter((b) => b.id !== boardId));
           setActive((curr) => (curr === boardId ? null : curr));
           setPending(null);
           return;
         }
         const msg = e instanceof Error ? e.message : "Unknown error";
-        // Same treatment on describe failure — remove the placeholder so the
-        // user isn't stranded on an empty journey-map shell.
         setBoards((prev) => prev.filter((b) => b.id !== boardId));
         setActive((curr) => (curr === boardId ? null : curr));
         setPending({ boardId, kind: "describe", lastEvent: null, error: msg });
@@ -627,8 +791,6 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
       const ac = new AbortController();
       pendingAbortRef.current = ac;
       try {
-        // Pull already-attached files out of IDB so the copilot's "regenerate"
-        // mode reasons through the board's persistent context automatically.
         const persistedFiles = await loadBoardAttachmentsAsFiles(
           boardId,
           boardsRef.current
@@ -650,9 +812,6 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
           signal: ac.signal,
         });
         if (!res.ok || !res.body) {
-          // Non-2xx (e.g. 400 "Provide at least one source") returns JSON, not
-          // SSE. Surface the server's actual error message so the user knows
-          // what to fix instead of a generic "HTTP 400".
           let serverMsg: string | null = null;
           try {
             const data = await res.json();
@@ -664,6 +823,7 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
         const decoder = new TextDecoder();
         let buffer = "";
         let finalMap: UniversalMap | null = null;
+        let finalArchetypeId: string | undefined;
         let errMsg: string | null = null;
 
         while (true) {
@@ -680,6 +840,10 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
             );
             if (event.phase === "result") {
               finalMap = event.map;
+              // Route-produced archetype docs carry `archetypeId`; universal
+              // results omit it. The BoardFrame checks this field to pick the
+              // renderer.
+              finalArchetypeId = event.archetypeId;
             } else if (event.phase === "error") {
               errMsg = event.message;
             }
@@ -696,7 +860,14 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
               ? {
                   ...b,
                   map: finalMap!,
-                  title: finalMap!.title || b.title,
+                  archetypeId: finalArchetypeId,
+                  title:
+                    // Archetype docs don't have a universal-map title field —
+                    // fall back to the current board title.
+                    finalArchetypeId
+                      ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        (finalMap as any)?.title || b.title
+                      : finalMap!.title || b.title,
                   status: "ready",
                 }
               : b
@@ -705,8 +876,6 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
         setPending(null);
       } catch (e) {
         if (e instanceof DOMException && e.name === "AbortError") {
-          // Abort also unwedges the board — leave it usable with whatever seed
-          // it currently holds instead of stuck at "pending-generate".
           setBoards((prev) =>
             prev.map((b) => (b.id === boardId ? { ...b, status: "ready" } : b))
           );
@@ -714,9 +883,6 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
           return;
         }
         const msg = e instanceof Error ? e.message : "Unknown error";
-        // Release the board from pending-generate so the overlay clears and
-        // the user can edit the seed / retry from the copilot. The error toast
-        // at the bottom of /canvas reads this pending.error.
         setBoards((prev) =>
           prev.map((b) => (b.id === boardId ? { ...b, status: "ready" } : b))
         );
@@ -732,6 +898,7 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
     () => ({
       projects,
       activeProjectId,
+      activeCanvasId,
       boards,
       activeBoardId,
       hydrated,
@@ -747,6 +914,10 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
       renameProject,
       deleteProject,
       switchProject,
+      createCanvas,
+      renameCanvas,
+      removeCanvas,
+      switchCanvas,
       attachFileToBoard,
       removeAttachment,
       startDescribe,
@@ -758,6 +929,7 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
     [
       projects,
       activeProjectId,
+      activeCanvasId,
       boards,
       activeBoardId,
       hydrated,
@@ -773,6 +945,10 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
       renameProject,
       deleteProject,
       switchProject,
+      createCanvas,
+      renameCanvas,
+      removeCanvas,
+      switchCanvas,
       attachFileToBoard,
       removeAttachment,
       startDescribe,
@@ -805,9 +981,6 @@ export function useActiveBoard(): Board | null {
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Last-resort content-type guesser for files that arrive without `file.type`
- *  set (some browsers drop it for obscure extensions). Aligned with what the
- *  server-side ingestion extractors understand. */
 function fallbackMediaType(name: string): string {
   const ext = name.toLowerCase().split(".").pop() ?? "";
   const map: Record<string, string> = {
@@ -830,10 +1003,6 @@ function fallbackMediaType(name: string): string {
   return map[ext] ?? "application/octet-stream";
 }
 
-/** Merge two File lists, dropping duplicates keyed by name + size. Guards
- *  against the momentary race where `attachFileToBoard` has committed to IDB
- *  but React hasn't yet propagated the `boards` state update into boardsRef,
- *  so the caller also re-passes the fresh files. */
 function dedupeFiles(primary: File[], secondary: File[]): File[] {
   const seen = new Set(primary.map((f) => `${f.name}:${f.size}`));
   const out = [...primary];
@@ -846,10 +1015,6 @@ function dedupeFiles(primary: File[], secondary: File[]): File[] {
   return out;
 }
 
-/** Reconstruct File objects for every attachment a board has persisted. Used
- *  on each describe/generate call so the agent always reasons through the
- *  full board context — not just freshly-added files. Failures on a single
- *  attachment (e.g. blob purged from IDB) degrade gracefully: skip it. */
 async function loadBoardAttachmentsAsFiles(
   boardId: string,
   boards: Board[]

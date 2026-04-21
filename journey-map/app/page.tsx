@@ -51,7 +51,16 @@ function formatBytes(n: number): string {
 
 export default function LandingPage() {
   const router = useRouter();
-  const { addBoard, attachFileToBoard, boards, startDescribe, startGenerate } = useCanvas();
+  const {
+    addBoard,
+    attachFileToBoard,
+    boards,
+    startDescribe,
+    startGenerate,
+    createCanvas,
+    renameCanvas,
+    activeCanvasId,
+  } = useCanvas();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false);
   const [isNarrow, setIsNarrow] = useState(false);
@@ -149,8 +158,24 @@ export default function LandingPage() {
     const hasSources = files.length > 0 || effectiveUrls.length > 0;
     const hasText = effectiveText.length > 0;
 
+    // Each landing submission lands in its own canvas inside the active
+    // project — Miro-style. If the active canvas is already empty, reuse it
+    // (and rename it to match the new board) so we don't pile up dangling
+    // "Canvas 1" husks. Otherwise spin up a fresh canvas. This runs only
+    // after the per-branch validation below so we never leave empty canvases
+    // behind on a no-op submit.
+    const canvasName = (title || effectiveText.slice(0, 60)).trim() || "New canvas";
+    const ensureCanvas = () => {
+      if (boards.length === 0 && activeCanvasId) {
+        renameCanvas(activeCanvasId, canvasName);
+      } else {
+        createCanvas(canvasName);
+      }
+    };
+
     if (!selectedId) {
       if (!hasText) return;
+      ensureCanvas();
       // Fire-and-forget: create a pending board, start describe, navigate now.
       // The context streams results into the board while /canvas renders the skeleton.
       // Files + URLs are forwarded to the describe endpoint, which fetches URLs
@@ -178,6 +203,36 @@ export default function LandingPage() {
       return;
     }
 
+    // Auto mode: skip framework picking. Route the prompt through the server
+    // classifier; it will pick an archetype (journey, table, competitive matrix,
+    // cartesian, process map) or fall back to the universal journey-map.
+    if (selectedId === "auto") {
+      if (!hasText && !hasSources) return;
+      ensureCanvas();
+      const board = addBoard({
+        frameworkId: "journey-map", // placeholder until result event returns archetypeId
+        title: (title || effectiveText.slice(0, 60)).trim() || "New framework",
+        map: EMPTY_MAP,
+        status: "pending-generate",
+        pendingPrompt: effectiveText,
+        makeActive: true,
+      });
+      await Promise.all(
+        files.map((f) => attachFileToBoard(board.id, f).catch(() => null))
+      );
+      void startGenerate(board.id, {
+        frameworkId: "auto",
+        text: hasText ? effectiveText : undefined,
+        files,
+        urls: effectiveUrls,
+        title: title || undefined,
+        persona: persona || undefined,
+        fidelityMode,
+      });
+      router.push(`/canvas?b=${board.id}`);
+      return;
+    }
+
     const fw = listFrameworks().find((f) => f.id === selectedId);
     if (!fw) return;
 
@@ -186,6 +241,7 @@ export default function LandingPage() {
     // circuit on the client so the user fixes it before a board is created.
     if (!hasText && !hasSources) return;
 
+    ensureCanvas();
     const board = addBoard({
       frameworkId: fw.id,
       customConfig: isDynamicFramework(fw.id) ? (fw.config as FrameworkConfig) : undefined,
