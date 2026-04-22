@@ -86,8 +86,8 @@ export function FrameworkPills({ selectedId, onSelect }: FrameworkPillsProps) {
           onClick={() => onSelect(null)}
           icon={<Sparkles className="h-3.5 w-3.5" />}
         />
-        {/* Auto — route via classifier to a bespoke archetype (journey, table,
-            competitive matrix, cartesian, process map) or fall back. */}
+        {/* Auto — server synthesizes a brand-new FrameworkConfig tailored to
+            the prompt + sources, then streams it back. */}
         <PillButton
           label="Auto"
           sub="AI picks"

@@ -281,8 +281,96 @@ Available chrome kinds (set via \`chrome: { kind: "<kind>", ... }\` on the confi
 - \`"kano-curve"\` — a rising-then-plateauing satisfaction curve. Use with 3 cols (Basics / Performance / Delighters).
 - \`"funnel"\` — trapezoidal wide-to-narrow shape. Use for conversion funnels, filtering pipelines.
 - \`"concentric"\` — nested circles. Use for onion models, stakeholder ring maps, maturity rings.
+- \`"coordinate-cross"\` — a centered horizontal + vertical axis cross with **double-sided arrows on both ends of each axis**. Pick this when the user explicitly asks for a coordinate system, cartesian-style plot, axes with double-sided arrows, an origin cross, or a four-quadrant space where the axes themselves are part of the visual identity. Pair with \`layout: "matrix"\` and set \`heroMetaFields\` for the X and Y axis labels. **If the user asks for double-sided arrows, axes with arrows on both ends, or a cartesian coordinate system, you MUST use this chrome kind — do NOT silently fall back to a plain matrix, which only shows single-direction chevrons.**
 
-Pick chrome when the framework's name evokes a shape. Skip chrome for regular tabular frameworks (SWOT, BCG, JTBD, journey map, etc.) — they don't need it.
+Pick chrome when the framework's name or the user's description evokes a shape. Skip chrome for regular tabular frameworks (SWOT, BCG, JTBD, journey map, etc.) — they don't need it.
+
+### When NOT to use chrome (important — chrome is often over-picked)
+
+**Omit \`chrome\` entirely for these framework classes:**
+
+- **Generic 2×2 frameworks** — SWOT, Eisenhower, BCG, priority matrix, stakeholder map, Ansoff, risk matrix, Kano (tabular variant). The four quadrants and row/col labels carry the identity. Only use \`coordinate-cross\` if the user **explicitly** asks for a cartesian-style plot, axes with arrows, or a coordinate system.
+- **Roadmaps, Gantt charts, timelines, sprint plans** — the visual identity comes from \`cardOrientation: "horizontal-bar"\` + \`spatialContinuity: "axis-continuous"\` on the renderingPlan. Chrome is redundant noise here. Do NOT pick \`funnel\`, \`concentric\`, or any other chrome kind for time-axis frameworks.
+- **Journey maps, service blueprints, user story maps** — tabular phase × lane. No chrome.
+- **Kanban, affinity, card sort, SCAMPER, hypothesis board, now/next/later** — columns already communicate the buckets. No chrome.
+- **Tables, catalogs, RACIs, OKRs** — tabular content. No chrome.
+
+**Rule of thumb**: the user should be able to read off your \`renderingPlan.summary\` and predict which visual affordances matter. If you're picking chrome to "add visual identity" to a framework whose identity is already carried by its layout or renderingPlan, delete the chrome.
+
+## renderingPlan — the visual layer (required)
+
+Your reasoning when designing a framework has three distinct layers. Separate them deliberately:
+
+1. **Semantic understanding** (captured in \`structuringPrompt\`) — what the framework MEANS: what cols / rows / cards represent.
+2. **Visual plan** (captured in \`renderingPlan\`) — how the framework LOOKS at a glance: discrete notes in cells vs horizontal bars along time vs dots at continuous (x, y) positions.
+3. **Per-card execution** — happens in a later populate step, which reads your \`renderingPlan\` to decide whether to set \`meta.x\`, \`meta.y\`, \`meta.width\` on each individual card.
+
+The \`renderingPlan\` field is required. Its four sub-fields:
+
+- **cardOrientation** — \`"stacked" | "horizontal-bar" | "dot" | "mixed"\`.
+  - \`stacked\` → cards flow vertically in each (col, row) cell. Default for discrete frameworks: SWOT, journey map, service blueprint, kanban, affinity, Venn, Double Diamond, RACI, business model canvas.
+  - \`horizontal-bar\` → cards render as horizontal pills positioned along one axis. Use when duration / sequence / time along a single axis is load-bearing: Gantt chart, roadmap, timeline with durations, program plan, sprint board laid along time. Convention: a card with \`meta.width === "0"\` renders as a diamond marker (milestone).
+  - \`dot\` → cards render as small markers at continuous (x, y) positions. Use when the POSITION of each entity carries the analytical insight: scatter plots, cartesian positioning, magic quadrant, 2D competitive maps, positioning by two continuous scores.
+  - \`mixed\` → combinations (rare).
+- **spatialContinuity** — \`"cell-discrete" | "axis-continuous" | "xy-continuous"\`. Pairs with cardOrientation: stacked → cell-discrete; horizontal-bar → axis-continuous; dot → xy-continuous.
+- **density** — \`"sparse" | "moderate" | "dense"\`. A hint for how many cards the populate step should emit. Use \`sparse\` for mind-maps or scatter plots with visual breathing room. Use \`dense\` for competitive maps or RACIs where every cell should be filled.
+- **summary** — 1–3 sentences in plain English describing how the framework should read at a glance. This becomes the top-priority directive for the populate step. BE SPECIFIC about positioning conventions.
+
+### Worked examples
+
+**Gantt chart:**
+\`\`\`
+{
+  cardOrientation: "horizontal-bar",
+  spatialContinuity: "axis-continuous",
+  density: "moderate",
+  summary: "Workstream swimlanes stack vertically as rows; each task renders as a horizontal bar anchored at meta.x (start month, 1–6) and stretching meta.width months along the shared time axis. Milestone cards use meta.width = 0 and render as a diamond marker. Dependencies as arrows between bar edges."
+}
+\`\`\`
+
+**Cartesian scatter plot / magic quadrant:**
+\`\`\`
+{
+  cardOrientation: "dot",
+  spatialContinuity: "xy-continuous",
+  density: "sparse",
+  summary: "Each entity renders as a small labelled dot at continuous (meta.x, meta.y) within the plot area (0–1000 range on each axis). Position carries the core insight; labels appear adjacent to dots."
+}
+\`\`\`
+
+**SWOT / Eisenhower / BCG / quadrant frameworks:**
+\`\`\`
+{
+  cardOrientation: "stacked",
+  spatialContinuity: "cell-discrete",
+  density: "moderate",
+  summary: "Four fixed quadrants arranged in a 2×2 grid. Each quadrant contains 3–5 stacked findings."
+}
+\`\`\`
+
+**Journey map / service blueprint / RACI / BMC:**
+\`\`\`
+{
+  cardOrientation: "stacked",
+  spatialContinuity: "cell-discrete",
+  density: "moderate",
+  summary: "Phases as cols, lanes as rows. Each cell holds 1–3 stacked cards capturing what happens at that intersection."
+}
+\`\`\`
+
+**Kanban / affinity / card sort / SCAMPER / hypothesis board:**
+\`\`\`
+{
+  cardOrientation: "stacked",
+  spatialContinuity: "cell-discrete",
+  density: "moderate",
+  summary: "Single row; cards stack vertically in category columns."
+}
+\`\`\`
+
+### Rule of thumb
+
+If the user explicitly asks for a visual form that implies positioning along axes (Gantt, roadmap, timeline with durations, scatter plot, cartesian plot, magic quadrant, positioning map), pick \`horizontal-bar\` or \`dot\` and name the positioning convention in the summary. Otherwise, \`stacked\` + \`cell-discrete\` is the safe default that matches every tabular/spatial framework in the library.
 
 ## structuringPrompt guidance
 

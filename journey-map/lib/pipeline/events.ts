@@ -1,14 +1,12 @@
 // Framework-agnostic SSE event protocol for the generate pipeline.
-// The pipeline phases (subject_id → extracting → synthesizing → critiquing →
-// revising → result) are not journey-map-specific — any 2D framework
-// (matrix, etc.) that reuses this orchestration emits the same events.
-//
-// The `result` event's `map` payload is parameterized by the framework's
-// map type — journey-map uses JourneyMap; a future matrix would use Matrix.
+// Every pipeline path (explicit-framework universal, auto-mode synthesis)
+// emits the same events. The `result` event's `map` payload is always a
+// UniversalMap — rendered by FrameworkGrid via the bound FrameworkConfig.
+
+import type { FrameworkConfig } from "@/lib/frameworks/universal/config";
 
 export type GeneratePhase =
   | "ingesting"
-  | "classifying"
   | "subject_id"
   | "extracting"
   | "synthesizing"
@@ -17,20 +15,8 @@ export type GeneratePhase =
   | "result"
   | "error";
 
-export type ClassifyScore = {
-  id: string;
-  score: number;
-  rationale: string;
-};
-
 export type GenerateEvent<TMap = unknown> =
   | { phase: "ingesting"; sourcesCount: number }
-  | {
-      phase: "classifying";
-      route: "archetype" | "fallback";
-      archetypeId?: string;
-      scores: ClassifyScore[];
-    }
   | {
       phase: "subject_id";
       current: number;
@@ -49,15 +35,13 @@ export type GenerateEvent<TMap = unknown> =
   | {
       phase: "result";
       summary: string;
-      /** The generated document. Universal path returns a `UniversalMap`;
-       *  archetype path returns the archetype's typed document (TableDoc,
-       *  CartesianDoc, …). The UI should branch on `archetypeId` to pick
-       *  the renderer. */
+      /** The generated UniversalMap to render via FrameworkGrid. */
       map: TMap;
-      /** Identifies which renderer produced the result.
-       *  Absent / "universal" ⇒ render via FrameworkGrid.
-       *  Otherwise ⇒ render via the named archetype. */
-      archetypeId?: string;
+      /** For auto-mode synthesis: the newly-generated FrameworkConfig that
+       *  pairs with `map`. The client registers this via registerDynamicFramework
+       *  so the board can be edited with the universal op/arrange pipeline.
+       *  Absent for explicit-framework generations (the config already exists). */
+      config?: FrameworkConfig;
       debug: GenerateDebug;
     }
   | { phase: "error"; message: string };

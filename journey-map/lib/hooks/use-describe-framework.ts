@@ -55,6 +55,11 @@ export function useDescribeFramework(): UseDescribeFrameworkReturn {
         if (!res.ok || !data?.ok) {
           throw new Error(data?.error ?? `Describe failed (HTTP ${res.status})`);
         }
+        if (!data.config || !data.populatedMap) {
+          throw new Error(
+            `Server returned no FrameworkConfig (mode=${data.mode ?? "unknown"}). useDescribeFramework expects a universal framework response.`
+          );
+        }
         if (Array.isArray(data.warnings)) setWarnings(data.warnings);
         return {
           config: data.config as FrameworkConfig,

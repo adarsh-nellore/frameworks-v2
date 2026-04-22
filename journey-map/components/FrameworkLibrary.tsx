@@ -11,6 +11,7 @@ import { deleteCustomFramework, loadCustomFrameworks } from "@/lib/frameworks/cu
 import { registerDynamicFramework } from "@/lib/frameworks";
 import type { AnyFrameworkModule } from "@/lib/frameworks";
 import type { FrameworkConfig } from "@/lib/frameworks/universal/config";
+import { FrameworkThumbnail } from "@/components/FrameworkThumbnail";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // FrameworkLibrary — browsable framework picker.
@@ -33,6 +34,16 @@ export type FrameworkLibraryProps = {
   compact?: boolean;
   /** Hide the "Custom" card at the top (used when caller expresses custom elsewhere). */
   hideCustomCard?: boolean;
+  /** Hide the top "Framework library" eyebrow + Clear row. Useful when the
+   *  caller already labels the surface (e.g. the left rail's own header). */
+  hideHeader?: boolean;
+  /** Case-insensitive filter applied to framework label + short description.
+   *  Empty or undefined = no filter. */
+  searchQuery?: string;
+  /** Visual variant:
+   *   "compact" — horizontal row cards with the lucide layout icon (default).
+   *   "cards"   — 2-column grid of bigger cards with full-width SVG thumbnails. */
+  variant?: "compact" | "cards";
 };
 
 function layoutIcon(layout: "grid" | "kanban" | "matrix" | "freeform") {
@@ -57,6 +68,9 @@ export function FrameworkLibrary({
   onSelect,
   compact = false,
   hideCustomCard = false,
+  hideHeader = false,
+  searchQuery,
+  variant = "compact",
 }: FrameworkLibraryProps) {
   const [frameworks, setFrameworks] = useState<AnyFrameworkModule[]>([]);
 
@@ -79,30 +93,39 @@ export function FrameworkLibrary({
   }
 
   const grouped = useMemo(() => {
-    const built = frameworks.filter((fw) => !isDynamicFramework(fw.id));
-    const custom = frameworks.filter((fw) => isDynamicFramework(fw.id));
+    const q = searchQuery?.trim().toLowerCase() ?? "";
+    const matches = (fw: AnyFrameworkModule) => {
+      if (!q) return true;
+      if (fw.label.toLowerCase().includes(q)) return true;
+      const desc = shortDescription(fw).toLowerCase();
+      return desc.includes(q);
+    };
+    const built = frameworks.filter((fw) => !isDynamicFramework(fw.id) && matches(fw));
+    const custom = frameworks.filter((fw) => isDynamicFramework(fw.id) && matches(fw));
     return { built, custom };
-  }, [frameworks]);
+  }, [frameworks, searchQuery]);
 
   return (
     <div className={compact ? "space-y-3" : "space-y-4"}>
-      <div className="flex items-center justify-between gap-2">
-        <span className={[
-          "font-mono uppercase text-ink-muted",
-          compact ? "text-[9px] tracking-[0.22em]" : "text-[10px] tracking-[0.24em]",
-        ].join(" ")}>
-          Framework library
-        </span>
-        {selectedId && (
-          <button
-            type="button"
-            onClick={() => onSelect(null)}
-            className="text-[11px] text-ink-muted hover:text-ink-primary underline-offset-2 hover:underline"
-          >
-            Clear
-          </button>
-        )}
-      </div>
+      {!hideHeader && (
+        <div className="flex items-center justify-between gap-2">
+          <span className={[
+            "font-mono uppercase text-ink-muted",
+            compact ? "text-[9px] tracking-[0.22em]" : "text-[10px] tracking-[0.24em]",
+          ].join(" ")}>
+            Framework library
+          </span>
+          {selectedId && (
+            <button
+              type="button"
+              onClick={() => onSelect(null)}
+              className="text-[11px] text-ink-muted hover:text-ink-primary underline-offset-2 hover:underline"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      )}
 
       {!hideCustomCard && (
         <button
@@ -138,44 +161,132 @@ export function FrameworkLibrary({
       )}
 
       {grouped.built.length > 0 && (
-        <div className="space-y-1.5">
+        <div className={variant === "cards" ? "space-y-2.5" : "space-y-1.5"}>
           <div className={[
             "font-mono uppercase text-ink-muted px-1",
             compact ? "text-[8px] tracking-[0.2em]" : "text-[9px] tracking-[0.22em]",
           ].join(" ")}>
             Built-in
           </div>
-          {grouped.built.map((fw) => (
-            <FrameworkCard
-              key={fw.id}
-              fw={fw}
-              selected={selectedId === fw.id}
-              compact={compact}
-              onSelect={() => onSelect(fw.id)}
-            />
-          ))}
+          {variant === "cards" ? (
+            <div className="grid grid-cols-2 gap-3">
+              {grouped.built.map((fw) => (
+                <ThumbnailCard
+                  key={fw.id}
+                  fw={fw}
+                  selected={selectedId === fw.id}
+                  onSelect={() => onSelect(fw.id)}
+                />
+              ))}
+            </div>
+          ) : (
+            grouped.built.map((fw) => (
+              <FrameworkCard
+                key={fw.id}
+                fw={fw}
+                selected={selectedId === fw.id}
+                compact={compact}
+                onSelect={() => onSelect(fw.id)}
+              />
+            ))
+          )}
         </div>
       )}
 
       {grouped.custom.length > 0 && (
-        <div className="space-y-1.5">
+        <div className={variant === "cards" ? "space-y-2.5" : "space-y-1.5"}>
           <div className={[
             "font-mono uppercase text-ink-muted px-1",
             compact ? "text-[8px] tracking-[0.2em]" : "text-[9px] tracking-[0.22em]",
           ].join(" ")}>
             Your custom frameworks
           </div>
-          {grouped.custom.map((fw) => (
-            <FrameworkCard
-              key={fw.id}
-              fw={fw}
-              selected={selectedId === fw.id}
-              compact={compact}
-              onSelect={() => onSelect(fw.id)}
-              onDelete={() => handleDeleteCustom(fw.config)}
-            />
-          ))}
+          {variant === "cards" ? (
+            <div className="grid grid-cols-2 gap-3">
+              {grouped.custom.map((fw) => (
+                <ThumbnailCard
+                  key={fw.id}
+                  fw={fw}
+                  selected={selectedId === fw.id}
+                  onSelect={() => onSelect(fw.id)}
+                  onDelete={() => handleDeleteCustom(fw.config)}
+                />
+              ))}
+            </div>
+          ) : (
+            grouped.custom.map((fw) => (
+              <FrameworkCard
+                key={fw.id}
+                fw={fw}
+                selected={selectedId === fw.id}
+                compact={compact}
+                onSelect={() => onSelect(fw.id)}
+                onDelete={() => handleDeleteCustom(fw.config)}
+              />
+            ))
+          )}
         </div>
+      )}
+    </div>
+  );
+}
+
+function ThumbnailCard({
+  fw,
+  selected,
+  onSelect,
+  onDelete,
+}: {
+  fw: AnyFrameworkModule;
+  selected: boolean;
+  onSelect: () => void;
+  onDelete?: () => void;
+}) {
+  return (
+    <div
+      className={[
+        "group relative rounded-xl transition-colors overflow-hidden",
+        "border",
+        selected
+          ? "bg-ink-primary/[0.04] border-ink-primary/40 ring-1 ring-ink-primary/20"
+          : "bg-white/70 border-border-soft hover:border-border-medium hover:bg-white",
+      ].join(" ")}
+    >
+      <button
+        type="button"
+        onClick={onSelect}
+        className="w-full text-left"
+      >
+        <div className="aspect-[3/2] w-full overflow-hidden bg-[var(--bg-surface,rgba(255,255,255,0.4))]">
+          <FrameworkThumbnail id={fw.id} config={fw.config} seed={fw.seed} />
+        </div>
+        <div className="px-3 py-2.5">
+          <div className="font-medium text-ink-primary text-[12.5px] truncate">
+            {fw.label}
+          </div>
+          <div className="text-ink-muted leading-snug mt-0.5 text-[10.5px] line-clamp-2">
+            {shortDescription(fw)}
+          </div>
+        </div>
+      </button>
+      {onDelete && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete();
+          }}
+          className={[
+            "absolute top-2 right-2 rounded-md w-6 h-6 grid place-items-center",
+            "text-ink-muted hover:text-rose-600 hover:bg-rose-50 transition-colors",
+            "opacity-0 group-hover:opacity-100 focus:opacity-100",
+            "bg-white/80 backdrop-blur-sm",
+          ].join(" ")}
+          title="Delete custom framework"
+          aria-label={`Delete ${fw.label}`}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
       )}
     </div>
   );

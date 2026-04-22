@@ -23,6 +23,7 @@ export const proposeFrameworkToolSchema = {
     "cardNoun",
     "structuringPrompt",
     "exampleInstructions",
+    "renderingPlan",
     "seed",
   ],
   additionalProperties: false,
@@ -48,13 +49,20 @@ export const proposeFrameworkToolSchema = {
     chrome: {
       type: "object",
       description:
-        "Optional decorative SVG chrome rendered behind the column headers. Use for spatial frameworks with tabular content: Double Diamond (chrome.kind='double-diamond'), Venn (circles=[labels]), Kano Model (kano-curve), conversion funnels (funnel), concentric ring models (concentric).",
+        "Optional decorative SVG chrome rendered above/behind the grid. Use for frameworks with a recognizable visual identity: Double Diamond (chrome.kind='double-diamond'), Venn (circles=[labels]), Kano Model ('kano-curve'), conversion funnels ('funnel'), concentric ring models ('concentric'), or a cartesian-style coordinate system with double-sided arrows on both axes ('coordinate-cross'). Pick 'coordinate-cross' when the user explicitly asks for axes with double-sided arrows, a coordinate system, an origin cross, or a cartesian-style plot — the chrome draws a centered cross with arrowheads at both ends on each axis.",
       required: ["kind"],
       additionalProperties: true,
       properties: {
         kind: {
           type: "string",
-          enum: ["double-diamond", "venn", "kano-curve", "funnel", "concentric"],
+          enum: [
+            "double-diamond",
+            "venn",
+            "kano-curve",
+            "funnel",
+            "concentric",
+            "coordinate-cross",
+          ],
         },
         leftLabel: { type: "string" },
         rightLabel: { type: "string" },
@@ -77,7 +85,48 @@ export const proposeFrameworkToolSchema = {
       minLength: 40,
       maxLength: 2000,
       description:
-        "Short framework-specific guidance appended to the universal system prompt. Explain what col, row, and card mean in THIS framework. 3-6 sentences. Do NOT mention ops (addCard, moveCol, etc.) — the universal prompt handles that.",
+        "Short framework-specific guidance appended to the universal system prompt. Explain what col, row, and card mean in THIS framework. 3-6 sentences. Do NOT mention ops (addCard, moveCol, etc.) — the universal prompt handles that. This is the SEMANTIC layer — what the framework MEANS. The renderingPlan field (below) is the separate VISUAL layer.",
+    },
+    renderingPlan: {
+      type: "object",
+      required: ["cardOrientation", "spatialContinuity", "density", "summary"],
+      additionalProperties: false,
+      description:
+        "How the framework should visually RENDER — separate from what it semantically means. This is the bridge between the structuringPrompt (semantic) and the populate step's per-card placement (execution). Tells the renderer whether cards are stacked notes, horizontal bars along a time axis, or dots at continuous (x, y) positions.",
+      properties: {
+        cardOrientation: {
+          type: "string",
+          enum: ["stacked", "horizontal-bar", "dot", "mixed"],
+          description:
+            "'stacked' = cards flow vertically in each (col,row) cell. Default for discrete frameworks: SWOT, journey map, service blueprint, kanban, affinity, Venn, Double Diamond, RACI, business model canvas. " +
+            "'horizontal-bar' = cards render as horizontal pills at meta.x with width meta.width. Use for Gantt charts, roadmaps, timelines, any framework where duration along ONE axis is load-bearing. Convention: a card with meta.width === \"0\" renders as a diamond marker (milestone). " +
+            "'dot' = cards render as small markers at continuous meta.x and meta.y. Use for scatter plots, cartesian positioning, magic quadrants, 2D maps — frameworks where the position of each entity carries the analytical insight. " +
+            "'mixed' = framework combines orientations (e.g. shape cards as background + content cards as dots on top).",
+        },
+        spatialContinuity: {
+          type: "string",
+          enum: ["cell-discrete", "axis-continuous", "xy-continuous"],
+          description:
+            "'cell-discrete' = cards belong to a single (col, row) cell and stack within it. Pairs with cardOrientation 'stacked'. " +
+            "'axis-continuous' = ONE axis is continuous (usually time). Cards carry meta.x (pixel offset inside their col) and optional meta.width (pixel span). Pairs with 'horizontal-bar'. " +
+            "'xy-continuous' = BOTH axes continuous. Cards carry meta.x AND meta.y within the overall plot area. Pairs with 'dot'.",
+        },
+        density: {
+          type: "string",
+          enum: ["sparse", "moderate", "dense"],
+          description:
+            "'sparse' = clusters with negative space (mind map, scatter plot, some roadmaps). " +
+            "'moderate' = most cells have 1–3 cards (journey map, SWOT, Gantt). " +
+            "'dense' = every cell populated (competitive map, RACI, service blueprint).",
+        },
+        summary: {
+          type: "string",
+          minLength: 20,
+          maxLength: 400,
+          description:
+            "1–3 sentences in plain English describing how the framework should read at a glance. This becomes the top-priority directive for the populate step — it reads this to decide how to set meta.x, meta.y, meta.width on each card. Example for Gantt: 'Swimlanes stack vertically; each task renders as a horizontal bar anchored at meta.x (start month) and stretching meta.width (duration in months). Milestones use meta.width = 0 and render as diamond markers.'",
+        },
+      },
     },
     exampleInstructions: {
       type: "array",

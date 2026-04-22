@@ -193,18 +193,57 @@ function freezeBoardsInto(
 
 /** "Recovered" copy of a board list: drops any pending-* states left over
  *  from a prior session back to "ready" (the fetch is long gone by the time
- *  we hydrate) and registers any dynamic framework configs carried on them. */
+ *  we hydrate) and registers any dynamic framework configs carried on them.
+ *
+ *  Migrates legacy archetype-shaped boards (created before Universe 3 was
+ *  deleted). Those boards stored `map` as a bespoke archetype doc (CartesianDoc,
+ *  TableDoc, etc.) which has no `cards` array — rendering through FrameworkGrid
+ *  now would crash. Reset such boards' maps to a minimal UniversalMap; the
+ *  user can regenerate content. Also strips the dead `archetypeId` field. */
 function recoverBoards(boards: Board[]): Board[] {
   for (const b of boards) {
     if (b.customConfig && !isDynamicFramework(b.customConfig.id)) {
       registerDynamicFramework(b.customConfig);
     }
   }
-  return boards.map((b) =>
-    b.status === "pending-describe" || b.status === "pending-generate"
-      ? { ...b, status: "ready" as BoardStatus }
-      : b
-  );
+  return boards.map((b) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const raw = b as any;
+    const hasLegacyArchetype = typeof raw.archetypeId === "string";
+    const mapOk =
+      b.map &&
+      typeof b.map === "object" &&
+      Array.isArray(b.map.cards) &&
+      Array.isArray(b.map.cols) &&
+      Array.isArray(b.map.rows);
+    const patched = hasLegacyArchetype || !mapOk;
+    if (!patched) {
+      return b.status === "pending-describe" || b.status === "pending-generate"
+        ? { ...b, status: "ready" as BoardStatus }
+        : b;
+    }
+    const fallbackMap: UniversalMap = mapOk
+      ? b.map
+      : b.customConfig?.seed ?? {
+          id: `${b.id}-empty`,
+          title: b.title || "Untitled",
+          meta: {},
+          cols: [],
+          rows: [],
+          cards: [],
+        };
+    // Drop archetypeId and any legacy fields via destructure + exclusion.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { archetypeId: _ax, ...clean } = raw;
+    return {
+      ...clean,
+      map: fallbackMap,
+      status:
+        b.status === "pending-describe" || b.status === "pending-generate"
+          ? ("ready" as BoardStatus)
+          : b.status,
+    } as Board;
+  });
 }
 
 export function CanvasProvider({ children }: { children: React.ReactNode }) {
@@ -734,51 +773,25 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
           throw new Error(data?.error ?? `Describe failed (HTTP ${res.status})`);
         }
 
-        if (data.mode === "archetype") {
-          // Classifier routed the prompt to a bespoke archetype. The board
-          // becomes an archetype board; `map` carries the typed doc (the
-          // BoardFrame narrows on archetypeId at render time).
-          const archetypeId = data.archetypeId as string;
-          const doc = data.doc as UniversalMap; // type-widened at the boundary
-          const title = (data.title as string) || (doc as { title?: string })?.title || "Untitled";
-          setBoards((prev) =>
-            prev.map((b) =>
-              b.id === boardId
-                ? {
-                    ...b,
-                    // Keep placeholder frameworkId so BoardFrame's safelyGetFramework
-                    // returns a non-null framework (edit chrome defaults); the
-                    // archetypeId discriminator decides rendering path.
-                    archetypeId,
-                    title,
-                    map: doc,
-                    status: "ready",
-                    pendingPrompt: undefined,
-                  }
-                : b
-            )
-          );
-        } else {
-          const config = data.config as FrameworkConfig;
-          const populatedMap = data.populatedMap as UniversalMap;
-          if (!isDynamicFramework(config.id)) registerDynamicFramework(config);
-          saveCustomFramework(config);
-          setBoards((prev) =>
-            prev.map((b) =>
-              b.id === boardId
-                ? {
-                    ...b,
-                    frameworkId: config.id,
-                    customConfig: config,
-                    title: populatedMap.title || config.label,
-                    map: populatedMap,
-                    status: "ready",
-                    pendingPrompt: undefined,
-                  }
-                : b
-            )
-          );
-        }
+        const config = data.config as FrameworkConfig;
+        const populatedMap = data.populatedMap as UniversalMap;
+        if (!isDynamicFramework(config.id)) registerDynamicFramework(config);
+        saveCustomFramework(config);
+        setBoards((prev) =>
+          prev.map((b) =>
+            b.id === boardId
+              ? {
+                  ...b,
+                  frameworkId: config.id,
+                  customConfig: config,
+                  title: populatedMap.title || config.label,
+                  map: populatedMap,
+                  status: "ready",
+                  pendingPrompt: undefined,
+                }
+              : b
+          )
+        );
         const warnings = Array.isArray(data.warnings)
           ? (data.warnings as unknown[]).filter(
               (w): w is string => typeof w === "string"
@@ -850,7 +863,7 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
         const decoder = new TextDecoder();
         let buffer = "";
         let finalMap: UniversalMap | null = null;
-        let finalArchetypeId: string | undefined;
+        let finalConfig: FrameworkConfig | null = null;
         let errMsg: string | null = null;
 
         while (true) {
@@ -867,10 +880,10 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
             );
             if (event.phase === "result") {
               finalMap = event.map;
-              // Route-produced archetype docs carry `archetypeId`; universal
-              // results omit it. The BoardFrame checks this field to pick the
-              // renderer.
-              finalArchetypeId = event.archetypeId;
+              // Auto-mode synthesis emits a brand-new FrameworkConfig. Register
+              // it as a dynamic framework so the board is editable with the
+              // universal op/arrange pipeline.
+              if (event.config) finalConfig = event.config;
             } else if (event.phase === "error") {
               errMsg = event.message;
             }
@@ -881,20 +894,27 @@ export function CanvasProvider({ children }: { children: React.ReactNode }) {
         if (errMsg) throw new Error(errMsg);
         if (!finalMap) throw new Error("Generation ended without a result");
 
+        if (finalConfig) {
+          if (!isDynamicFramework(finalConfig.id)) registerDynamicFramework(finalConfig);
+          saveCustomFramework(finalConfig);
+        }
+
         setBoards((prev) =>
           prev.map((b) =>
             b.id === boardId
               ? {
                   ...b,
                   map: finalMap!,
-                  archetypeId: finalArchetypeId,
-                  title:
-                    // Archetype docs don't have a universal-map title field —
-                    // fall back to the current board title.
-                    finalArchetypeId
-                      ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        (finalMap as any)?.title || b.title
-                      : finalMap!.title || b.title,
+                  ...(finalConfig
+                    ? {
+                        frameworkId: finalConfig.id,
+                        customConfig: finalConfig,
+                        title:
+                          finalMap!.title || finalConfig.label || b.title,
+                      }
+                    : {
+                        title: finalMap!.title || b.title,
+                      }),
                   status: "ready",
                 }
               : b

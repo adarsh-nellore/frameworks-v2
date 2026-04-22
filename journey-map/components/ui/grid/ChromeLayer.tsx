@@ -96,7 +96,12 @@ function resolveChrome(
         : undefined;
     return { kind: "venn", circles };
   }
-  if (kind === "kano-curve" || kind === "funnel" || kind === "concentric") {
+  if (
+    kind === "kano-curve" ||
+    kind === "funnel" ||
+    kind === "concentric" ||
+    kind === "coordinate-cross"
+  ) {
     return { kind };
   }
   return null;
@@ -128,7 +133,57 @@ function renderChrome(
       return <FunnelChrome w={w} h={h} />;
     case "concentric":
       return <ConcentricChrome w={w} h={h} />;
+    case "coordinate-cross":
+      return <CoordinateCrossChrome w={w} h={h} />;
   }
+}
+
+function CoordinateCrossChrome({ w, h }: { w: number; h: number }) {
+  // Centered coordinate cross with double-sided arrows on both axes.
+  // Renders as a compact banner above the grid; the grid itself keeps its
+  // editable X/Y axis labels via XAxisBand / YAxisBand. This chrome is the
+  // framework's visual identity marker, not the interactive axis spine.
+  const cx = w / 2;
+  const cy = h / 2;
+  const inset = 16;
+  return (
+    <g>
+      <defs>
+        <marker
+          id="cc-arrow"
+          viewBox="0 0 10 10"
+          refX="8"
+          refY="5"
+          markerWidth="7"
+          markerHeight="7"
+          orient="auto-start-reverse"
+        >
+          <path d="M 0 0 L 10 5 L 0 10 z" fill={STROKE} />
+        </marker>
+      </defs>
+      <line
+        x1={inset}
+        y1={cy}
+        x2={w - inset}
+        y2={cy}
+        stroke={STROKE}
+        strokeWidth="1.5"
+        markerStart="url(#cc-arrow)"
+        markerEnd="url(#cc-arrow)"
+      />
+      <line
+        x1={cx}
+        y1={inset}
+        x2={cx}
+        y2={h - inset}
+        stroke={STROKE}
+        strokeWidth="1.5"
+        markerStart="url(#cc-arrow)"
+        markerEnd="url(#cc-arrow)"
+      />
+      <circle cx={cx} cy={cy} r={2.5} fill={STROKE} />
+    </g>
+  );
 }
 
 function DoubleDiamondChrome({

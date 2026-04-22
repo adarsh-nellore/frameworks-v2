@@ -35,6 +35,7 @@ import { SortableHandle } from "./grid/Sortable";
 import { SelectionToolbar } from "./grid/SelectionToolbar";
 import { FreeformLayout } from "./grid/FreeformLayout";
 import { ChromeLayer } from "./grid/ChromeLayer";
+import { PresentedCard, inferPresentMode } from "./grid/PresentedCard";
 import { ConnectorLayer, type ConnectorDraft } from "./grid/ConnectorLayer";
 import { ConnectorUIContext, type ConnectorUI } from "./grid/connector-ui-context";
 import type { ConnectorAnchor } from "@/lib/frameworks/universal/types";
@@ -824,12 +825,22 @@ function CellSlotGrid({
     id: `slot:${colId}:${rowId}`,
     data: { kind: "slot", colId, rowId },
   });
+
+  // Phase C execution layer: if any card in this cell carries meta.x
+  // positioning hints, render those cards as absolute-positioned bars/dots/
+  // diamonds via PresentedCard. Stacked cards (no meta.x) still render below
+  // in normal flow so frameworks can mix styles within a single cell.
+  const positioned = cards.filter((c) => inferPresentMode(c) !== "stacked");
+  const stacked = cards.filter((c) => inferPresentMode(c) === "stacked");
+  const hasPositioned = positioned.length > 0;
+
   return (
     <div
       ref={drop.setNodeRef}
-      style={{ width: CARD_W }}
+      style={{ width: CARD_W, minHeight: hasPositioned ? 80 : undefined }}
       className={[
         "shrink-0 flex flex-col gap-2 p-1 rounded-xl",
+        hasPositioned ? "relative overflow-visible" : "",
         drop.isOver ? "bg-ink-primary/[0.04] ring-1 ring-ink-primary/30 ring-inset" : "",
       ].join(" ")}
     >
@@ -844,7 +855,24 @@ function CellSlotGrid({
         />
       ) : (
         <>
-          {cards.map((card, idx) => (
+          {positioned.map((card) => {
+            const mode = inferPresentMode(card);
+            if (mode === "stacked") return null;
+            return (
+              <PresentedCard
+                key={card.id}
+                card={card}
+                themeKind={rowKind}
+                mode={mode}
+                isSelected={selectedCardIds.has(card.id)}
+                agentBusy={agentBusy}
+                onSelect={onCardSelect}
+                onTextChange={onEditCard}
+                onContextMenu={onCardContextMenu}
+              />
+            );
+          })}
+          {stacked.map((card, idx) => (
             <GridCard
               key={card.id}
               card={card}
@@ -871,7 +899,7 @@ function CellSlotGrid({
               onContextMenu={onCardContextMenu}
             />
           ))}
-          <AddCardButton agentBusy={agentBusy} onAdd={onAddCard} />
+          {!hasPositioned && <AddCardButton agentBusy={agentBusy} onAdd={onAddCard} />}
         </>
       )}
     </div>
@@ -1049,9 +1077,30 @@ function MatrixLayout(p: LayoutProps) {
   const colIds = map.cols.map((c) => c.id);
   const rowIds = map.rows.map((r) => r.id);
   const cellMinWStyle = { minWidth: MATRIX_CELL_MIN_W } as const;
+  const hasChrome = !!config.chrome || !!map.meta?.chromeKind;
+  const matrixTotalWidth =
+    LABEL_W +
+    Y_AXIS_BAND_W +
+    map.cols.length * MATRIX_CELL_MIN_W +
+    (map.cols.length - 1) * GUTTER;
 
   return (
     <div className="flex flex-col">
+      {hasChrome && (
+        <div className="mb-3" style={{ marginLeft: Y_AXIS_BAND_W + LABEL_W + GUTTER }}>
+          <ChromeLayer
+            config={config}
+            metaOverrides={{
+              chromeKind: map.meta?.chromeKind,
+              chromeLeftLabel: map.meta?.chromeLeftLabel,
+              chromeRightLabel: map.meta?.chromeRightLabel,
+              chromeCircles: map.meta?.chromeCircles,
+            }}
+            totalWidth={matrixTotalWidth - (Y_AXIS_BAND_W + LABEL_W + GUTTER)}
+            colCount={map.cols.length}
+          />
+        </div>
+      )}
       {/* X-axis band — leftOffset aligns the label with the first column. */}
       <XAxisBand
         label={xLabel}
@@ -1271,12 +1320,19 @@ function ColCardStack({
     data: { kind: "slot", colId, rowId },
   });
   const sorted = [...cards].sort((a, b) => a.order - b.order);
+
+  // Phase C: split positioned cards (meta.x set) from stacked cards.
+  const positioned = sorted.filter((c) => inferPresentMode(c) !== "stacked");
+  const stacked = sorted.filter((c) => inferPresentMode(c) === "stacked");
+  const hasPositioned = positioned.length > 0;
+
   return (
     <div
       ref={drop.setNodeRef}
       className={[
         "flex flex-col gap-2 rounded-xl transition-colors",
         compact ? "min-h-[120px] p-1" : "min-h-[140px] p-1",
+        hasPositioned ? "relative overflow-visible" : "",
         drop.isOver ? "bg-ink-primary/[0.05] ring-2 ring-ink-primary/30 ring-inset" : "",
       ].join(" ")}
     >
@@ -1292,7 +1348,24 @@ function ColCardStack({
         />
       ) : (
         <>
-          {sorted.map((card) => (
+          {positioned.map((card) => {
+            const mode = inferPresentMode(card);
+            if (mode === "stacked") return null;
+            return (
+              <PresentedCard
+                key={card.id}
+                card={card}
+                themeKind={rowKind}
+                mode={mode}
+                isSelected={selectedCardIds.has(card.id)}
+                agentBusy={agentBusy}
+                onSelect={onCardSelect}
+                onTextChange={onEditCard}
+                onContextMenu={onCardContextMenu}
+              />
+            );
+          })}
+          {stacked.map((card) => (
             <GridCard
               key={card.id}
               card={card}
@@ -1318,7 +1391,7 @@ function ColCardStack({
               onContextMenu={onCardContextMenu}
             />
           ))}
-          <AddCardButton agentBusy={agentBusy} onAdd={onAddCard} />
+          {!hasPositioned && <AddCardButton agentBusy={agentBusy} onAdd={onAddCard} />}
         </>
       )}
     </div>

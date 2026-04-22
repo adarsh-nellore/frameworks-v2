@@ -12,7 +12,10 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
-import { FrameworkPills } from "@/components/FrameworkPills";
+import {
+  PROJECTS_SIDEBAR_WIDTH,
+  ProjectsSidebar,
+} from "@/components/ProjectsSidebar";
 import { useCanvas } from "@/lib/canvas/context";
 import { listFrameworks, isDynamicFramework } from "@/lib/frameworks";
 import type { UniversalMap } from "@/lib/frameworks/universal/types";
@@ -203,14 +206,14 @@ export default function LandingPage() {
       return;
     }
 
-    // Auto mode: skip framework picking. Route the prompt through the server
-    // classifier; it will pick an archetype (journey, table, competitive matrix,
-    // cartesian, process map) or fall back to the universal journey-map.
+    // Auto mode: skip framework picking. The server synthesizes a brand-new
+    // FrameworkConfig from the prompt + sources, returns it via the generate
+    // SSE stream, and canvas/context registers it as a dynamic framework.
     if (selectedId === "auto") {
       if (!hasText && !hasSources) return;
       ensureCanvas();
       const board = addBoard({
-        frameworkId: "journey-map", // placeholder until result event returns archetypeId
+        frameworkId: "journey-map", // placeholder until the result event arrives with the synthesized config
         title: (title || effectiveText.slice(0, 60)).trim() || "New framework",
         map: EMPTY_MAP,
         status: "pending-generate",
@@ -308,35 +311,57 @@ export default function LandingPage() {
   const selectedFramework = selectedId ? listFrameworks().find((fw) => fw.id === selectedId) : null;
   const busy = false; // generation now runs in the canvas route, not the landing
 
+  // Light-touch "example" prompts that read like suggested app ideas — same
+  // affordance Stitch puts above the prompt composer. Clicking one drops the
+  // text into the textarea so the user can edit before submitting.
+  const examplePrompts = [
+    "Customer journey map for a first-time coffee subscription signup",
+    "Kanban for launching a newsletter",
+    "Competitive matrix of AI note-taking apps",
+    "JTBD canvas for a solo freelancer finding new clients",
+  ];
+
   return (
-    <main className="fixed inset-0 overflow-hidden">
-      {/* Minimal header — logo top-left only, nothing else */}
-      <header className="absolute top-6 left-8 z-10 flex items-center gap-2.5">
-        <div className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-ink-primary text-white">
-          <Sparkles className="h-4 w-4" />
-        </div>
-        <span className="font-semibold text-[15px] text-ink-primary tracking-tight">Frameworks</span>
-      </header>
+    <main className="fixed inset-0 overflow-hidden bg-[var(--bg-base,white)]">
+      <ProjectsSidebar />
 
-      {/* Deep-link to workspace when boards already exist */}
-      {boards.length > 0 && (
-        <button
-          onClick={() => router.push("/canvas")}
-          className="absolute top-6 right-8 z-10 inline-flex items-center gap-1.5 rounded-full glass px-4 py-2 text-[13px] text-ink-secondary hover:text-ink-primary transition-colors"
-        >
-          Open workspace
-          <span className="text-ink-muted">→</span>
-        </button>
-      )}
-
-      {/* Layout: one vertical scroller — prompt hero up top, framework library
-          directly below. Earlier the pills were pinned to the bottom row of a
-          grid, so on many viewports they read as tucked-away chrome and the
-          user scrolled looking for them. Now they're part of the same
-          continuous column under the hero. */}
-      <div className="h-full overflow-y-auto chat-scroll">
-        <div className="min-h-full flex flex-col items-center px-6 pt-20 pb-16">
+      {/* Main content pushed right of the sidebar. Single vertical scroller so
+          the prompt hero + framework library + advanced panel all share the
+          same column behaviour. */}
+      <div
+        className="h-full overflow-y-auto chat-scroll"
+        style={{ marginLeft: PROJECTS_SIDEBAR_WIDTH }}
+      >
+        <div className="min-h-full flex flex-col items-center px-6 pt-16 pb-16">
           <div className="w-full max-w-[760px] space-y-5">
+          <div className="mb-2">
+            <h1 className="text-[40px] sm:text-[52px] font-semibold text-ink-primary leading-[1.05] tracking-tight">
+              Welcome to Frameworks.
+            </h1>
+            <p className="text-[14px] text-ink-muted mt-2 leading-snug">
+              Describe what you want to make and we'll design the structure,
+              populate it from your sources, and drop it on a canvas.
+            </p>
+          </div>
+
+          {/* Example prompt chips above the composer. Clicking one seeds the
+              textarea so the user can edit before submitting. */}
+          <div className="flex flex-wrap gap-2">
+            {examplePrompts.map((p) => (
+              <button
+                key={p}
+                type="button"
+                onClick={() => {
+                  setText(p);
+                  textareaRef.current?.focus();
+                }}
+                className="rounded-full bg-white/70 border border-border-soft hover:border-border-medium hover:bg-white px-3 py-1.5 text-[12px] text-ink-secondary hover:text-ink-primary transition-colors max-w-[340px] truncate"
+                title={p}
+              >
+                {p}
+              </button>
+            ))}
+          </div>
           {/* Prompt box (glassmorphic) */}
           <div
             onDragOver={(e) => {
@@ -597,20 +622,6 @@ export default function LandingPage() {
               {combinedError}
             </div>
           )}
-          </div>
-
-          {/* Framework library — sits directly under the hero in the same
-              scroll container. Eyebrow label makes it read as a real section
-              rather than a chrome toolbar. */}
-          <div className="w-full max-w-[880px] mt-10">
-            <div className="flex items-center gap-2 mb-3">
-              <div className="h-px flex-1 bg-border-soft/80" />
-              <span className="font-mono text-[10px] tracking-[0.22em] uppercase text-ink-muted">
-                Or start from a framework
-              </span>
-              <div className="h-px flex-1 bg-border-soft/80" />
-            </div>
-            <FrameworkPills selectedId={selectedId} onSelect={setSelectedId} />
           </div>
         </div>
       </div>

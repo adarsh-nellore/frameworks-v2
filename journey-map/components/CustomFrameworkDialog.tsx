@@ -70,6 +70,11 @@ export function CustomFrameworkDialog({ open, onClose, onSuccess, existingIds }:
       if (!res.ok || !data?.ok) {
         throw new Error(data?.error ?? `Generation failed (HTTP ${res.status})`);
       }
+      if (!data.config || !data.populatedMap) {
+        throw new Error(
+          `Server returned no FrameworkConfig (mode=${data.mode ?? "unknown"}). The describe dialog expects a universal framework response.`
+        );
+      }
       if (Array.isArray(data.warnings)) setWarnings(data.warnings);
       setPhase("done");
       onSuccess(data.config as FrameworkConfig, data.populatedMap as UniversalMap);

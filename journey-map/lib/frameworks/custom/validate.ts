@@ -1,4 +1,4 @@
-import type { FrameworkConfig, CardMetaField, HeroMetaField } from "../universal/config";
+import type { FrameworkConfig, CardMetaField, HeroMetaField, RenderingPlan } from "../universal/config";
 import type { UniversalMap, Card } from "../universal/types";
 import { validateMap } from "../universal/ops";
 
@@ -119,8 +119,14 @@ export function validateFrameworkConfig(raw: unknown, existingIds: Iterable<stri
   const exampleInstructions = exs.slice(0, MAX_EXAMPLES);
 
   // ── fixedCols / fixedRows (optional booleans) ──────────────────────────────
-  const fixedCols = src.fixedCols === true;
-  const fixedRows = src.fixedRows === true;
+  // Matrix layout semantically implies a fixed dense grid. If the agent
+  // forgets to set both flags (easy mistake when patterning after the
+  // competitive-map few-shot, which uses matrix with dynamic rows/cols),
+  // coerce to fixed rather than rejecting — same forgiveness the kanban
+  // branch below applies when the agent proposes >1 row.
+  const coerceFixedForMatrix = src.layout === "matrix";
+  const fixedCols = src.fixedCols === true || coerceFixedForMatrix;
+  const fixedRows = src.fixedRows === true || coerceFixedForMatrix;
 
   // ── cardMetaFields / heroMetaFields (optional) ─────────────────────────────
   const cardMetaFields = parseCardMetaFields(src.cardMetaFields);
@@ -132,6 +138,11 @@ export function validateFrameworkConfig(raw: unknown, existingIds: Iterable<stri
   // ── chrome (optional) ───────────────────────────────────────────────────────
   const chrome = parseChrome(src.chrome);
   if (chrome.error) return { ok: false, reason: chrome.error };
+
+  // ── renderingPlan (required in schema, but fall back to a sensible default
+  //     inferred from layout if the agent omits it or sends a malformed one) ─
+  const renderingPlan = parseRenderingPlan(src.renderingPlan, src.layout);
+  if (renderingPlan.error) return { ok: false, reason: renderingPlan.error };
 
   // ── connectors (optional) ──────────────────────────────────────────────────
   const connectors = parseConnectors(src.connectors);
@@ -145,12 +156,10 @@ export function validateFrameworkConfig(raw: unknown, existingIds: Iterable<stri
   // ── Layout-specific rules ──────────────────────────────────────────────────
   let effectiveFixedRows = fixedRows;
   if (layout === "matrix") {
-    if (!fixedCols || !fixedRows) {
-      return { ok: false, reason: 'matrix layout requires fixedCols: true AND fixedRows: true' };
-    }
     if (seed.cols.length < 2 || seed.rows.length < 2) {
       return { ok: false, reason: 'matrix layout requires at least 2 cols and 2 rows' };
     }
+    // fixedCols/fixedRows are coerced to true above — matrix is always fixed.
   } else if (layout === "kanban") {
     // Kanban is single-row by convention. If the agent proposed multiple rows,
     // coerce to grid rather than rejecting — the user doesn't care which
@@ -166,6 +175,14 @@ export function validateFrameworkConfig(raw: unknown, existingIds: Iterable<stri
   return buildResult(layout);
 
   function buildResult(effectiveLayout: "grid" | "kanban" | "matrix" | "freeform"): Result {
+    // Strip chrome kinds that don't make sense with the effective layout
+    // instead of rejecting the whole config. The agent may misinterpret and
+    // pick, e.g., kanban + coordinate-cross; the framework still works without
+    // the chrome, and the user gets a usable result.
+    const effectiveChrome =
+      chrome.value && chromeFitsLayout(chrome.value.kind, effectiveLayout)
+        ? chrome.value
+        : undefined;
 
     // ── Assemble ─────────────────────────────────────────────────────────────
     const config: FrameworkConfig = {
@@ -184,12 +201,113 @@ export function validateFrameworkConfig(raw: unknown, existingIds: Iterable<stri
       ...(heroMetaFields.value ? { heroMetaFields: heroMetaFields.value } : {}),
       ...(chatPlaceholder ? { chatPlaceholder } : {}),
       ...(chatSubtitle ? { chatSubtitle } : {}),
-      ...(chrome.value ? { chrome: chrome.value } : {}),
+      ...(effectiveChrome ? { chrome: effectiveChrome } : {}),
       ...(connectors.value ? { connectors: connectors.value } : {}),
+      ...(renderingPlan.value ? { renderingPlan: renderingPlan.value } : {}),
     };
 
     return { ok: true, config };
   }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// renderingPlan — the visual layer between semantic framework choice and
+// per-card placement. We coerce missing/malformed plans to a safe default
+// inferred from layout so existing frameworks and agent misfires don't break.
+// ──────────────────────────────────────────────────────────────────────────────
+
+function parseRenderingPlan(
+  raw: unknown,
+  layout: unknown
+): { error?: string; value?: RenderingPlan } {
+  const defaultPlan: RenderingPlan = inferDefaultRenderingPlan(layout);
+  if (raw === undefined || raw === null) return { value: defaultPlan };
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    return { error: "renderingPlan must be an object" };
+  }
+  const r = raw as Record<string, unknown>;
+
+  const cardOrientation =
+    r.cardOrientation === "stacked" ||
+    r.cardOrientation === "horizontal-bar" ||
+    r.cardOrientation === "dot" ||
+    r.cardOrientation === "mixed"
+      ? r.cardOrientation
+      : undefined;
+  if (r.cardOrientation !== undefined && cardOrientation === undefined) {
+    return {
+      error: `renderingPlan.cardOrientation must be one of "stacked" | "horizontal-bar" | "dot" | "mixed" (got "${String(r.cardOrientation)}")`,
+    };
+  }
+
+  const spatialContinuity =
+    r.spatialContinuity === "cell-discrete" ||
+    r.spatialContinuity === "axis-continuous" ||
+    r.spatialContinuity === "xy-continuous"
+      ? r.spatialContinuity
+      : undefined;
+  if (r.spatialContinuity !== undefined && spatialContinuity === undefined) {
+    return {
+      error: `renderingPlan.spatialContinuity must be one of "cell-discrete" | "axis-continuous" | "xy-continuous" (got "${String(r.spatialContinuity)}")`,
+    };
+  }
+
+  const density =
+    r.density === "sparse" ||
+    r.density === "moderate" ||
+    r.density === "dense"
+      ? r.density
+      : undefined;
+  if (r.density !== undefined && density === undefined) {
+    return {
+      error: `renderingPlan.density must be one of "sparse" | "moderate" | "dense" (got "${String(r.density)}")`,
+    };
+  }
+
+  const summary =
+    typeof r.summary === "string" && r.summary.trim()
+      ? r.summary.trim().slice(0, 400)
+      : undefined;
+
+  return {
+    value: {
+      cardOrientation: cardOrientation ?? defaultPlan.cardOrientation,
+      spatialContinuity: spatialContinuity ?? defaultPlan.spatialContinuity,
+      density: density ?? defaultPlan.density,
+      summary: summary ?? defaultPlan.summary,
+    },
+  };
+}
+
+function inferDefaultRenderingPlan(layout: unknown): RenderingPlan {
+  // For any unknown or standard layout, default to the safe stacked /
+  // cell-discrete treatment that matches every existing catalog framework.
+  return {
+    cardOrientation: "stacked",
+    spatialContinuity: "cell-discrete",
+    density: "moderate",
+    summary:
+      layout === "matrix"
+        ? "Fixed N×M grid. Cards stack discretely within each (col, row) cell."
+        : layout === "kanban"
+          ? "Single row. Cards stack vertically in each category column."
+          : layout === "freeform"
+            ? "Unstructured canvas. Cards positioned via meta.x / meta.y in pixel coordinates; no forced grid."
+            : "Grid with cols and rows. Cards stack discretely within each (col, row) cell.",
+  };
+}
+
+// Chrome kinds are tied to specific layouts. A coordinate-cross implies two
+// axes, which only matrix provides; venn/kano/funnel/double-diamond/concentric
+// are banners that read on kanban or grid. This keeps the agent's mistakes
+// forgivable — we strip rather than reject.
+function chromeFitsLayout(
+  kind: NonNullable<FrameworkConfig["chrome"]>["kind"],
+  layout: "grid" | "kanban" | "matrix" | "freeform"
+): boolean {
+  if (kind === "coordinate-cross") return layout === "matrix";
+  // All other chrome kinds were designed for kanban/grid tabular layouts.
+  return layout === "kanban" || layout === "grid" || layout === "matrix";
 }
 
 function parseConnectors(raw: unknown): { error?: string; value?: FrameworkConfig["connectors"] } {
@@ -241,10 +359,17 @@ function parseChrome(raw: unknown): { error?: string; value?: FrameworkConfig["c
       : undefined;
     return { value: { kind, ...(circles && circles.length ? { circles } : {}) } };
   }
-  if (kind === "kano-curve" || kind === "funnel" || kind === "concentric") {
+  if (
+    kind === "kano-curve" ||
+    kind === "funnel" ||
+    kind === "concentric" ||
+    kind === "coordinate-cross"
+  ) {
     return { value: { kind } };
   }
-  return { error: `chrome.kind must be one of "double-diamond" | "venn" | "kano-curve" | "funnel" | "concentric"` };
+  return {
+    error: `chrome.kind must be one of "double-diamond" | "venn" | "kano-curve" | "funnel" | "concentric" | "coordinate-cross"`,
+  };
 }
 
 // Normalize a proposed framework id into the strict `custom-[a-z0-9-]{3,40}`

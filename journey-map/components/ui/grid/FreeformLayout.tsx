@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Plus, X } from "lucide-react";
-import { kindTheme, themeKindForIndex } from "@/lib/row-kind-theme";
+import { X } from "lucide-react";
+import { kindTheme } from "@/lib/row-kind-theme";
 import type { UniversalMap, Card } from "@/lib/frameworks/universal/types";
 import type { FrameworkConfig } from "@/lib/frameworks/universal/config";
 import type { Op } from "@/lib/frameworks/universal/ops";
@@ -76,48 +76,6 @@ export function FreeformLayout({
     ]);
   }
 
-  function addCardInCluster(colId: string, rowId: string) {
-    const clusterCards = notes.filter((c) => c.colId === colId && c.rowId === rowId);
-    const baseIdx = clusterCards.length;
-    const x = 120 + (baseIdx % 5) * (CARD_W + 24);
-    const y = 120 + Math.floor(baseIdx / 5) * (CARD_H + 24);
-    commitOps([
-      {
-        op: "addCard",
-        colId,
-        rowId,
-        text: "New note",
-        meta: { x: String(x), y: String(y) },
-      },
-    ]);
-  }
-
-  function addShape(kind: ShapeKind) {
-    const rowId = map.rows[0]?.id ?? "r1";
-    const colId = map.cols[0]?.id ?? "c1";
-    const defaults =
-      kind === "circle" || kind === "ellipse"
-        ? { w: 360, h: 360 }
-        : kind === "diamond"
-          ? { w: 500, h: 360 }
-          : { w: 400, h: 280 };
-    commitOps([
-      {
-        op: "addCard",
-        colId,
-        rowId,
-        text: `New ${kind}`,
-        meta: {
-          shapeKind: kind,
-          x: "240",
-          y: "200",
-          shapeWidth: String(defaults.w),
-          shapeHeight: String(defaults.h),
-        },
-      },
-    ]);
-  }
-
   // Double-click on empty canvas → add a new note exactly where the user
   // clicked. Falls back to the first col/row so even a bare freeform board
   // (one default cluster) accepts the gesture. We ignore dbl-clicks that
@@ -153,59 +111,6 @@ export function FreeformLayout({
       data-stage
       onDoubleClick={handleCanvasDoubleClick}
     >
-      {/* Toolbar — cluster chips + shape palette */}
-      <div className="absolute top-3 left-3 z-20 flex flex-wrap gap-1.5 max-w-[85%]" data-floating>
-        {map.cols.flatMap((col) =>
-          map.rows.map((row) => {
-            const theme = kindTheme(row.kind ?? col.kind ?? themeKindForIndex(map.cols.indexOf(col)));
-            const count = notes.filter((c) => c.colId === col.id && c.rowId === row.id).length;
-            return (
-              <button
-                key={`${col.id}-${row.id}`}
-                type="button"
-                disabled={agentBusy}
-                onClick={() => addCardInCluster(col.id, row.id)}
-                className={[
-                  "inline-flex items-center gap-1.5 rounded-full px-2 py-1",
-                  "text-[11px] text-ink-secondary border border-border-soft",
-                  "hover:border-border-medium hover:text-ink-primary hover:bg-white/80",
-                  "transition-colors",
-                  theme.tintBg,
-                ].join(" ")}
-                title={`Add card to ${col.label} · ${row.label}`}
-              >
-                <span className="font-medium">{col.label}</span>
-                {map.rows.length > 1 && <span className="text-ink-muted">·</span>}
-                {map.rows.length > 1 && <span>{row.label}</span>}
-                <span className="font-mono text-[9px] text-ink-muted">{count}</span>
-                <Plus className="h-2.5 w-2.5 text-ink-muted" />
-              </button>
-            );
-          })
-        )}
-
-        <span className="h-5 w-px bg-border-soft mx-0.5 self-center" aria-hidden />
-
-        {(["rectangle", "diamond", "circle", "ellipse"] as ShapeKind[]).map((kind) => (
-          <button
-            key={kind}
-            type="button"
-            disabled={agentBusy}
-            onClick={() => addShape(kind)}
-            className={[
-              "inline-flex items-center gap-1.5 rounded-full px-2 py-1",
-              "text-[11px] text-ink-secondary border border-border-soft",
-              "hover:border-border-medium hover:text-ink-primary hover:bg-white/80",
-              "transition-colors bg-white/50",
-            ].join(" ")}
-            title={`Add ${kind} shape`}
-          >
-            <ShapeGlyph kind={kind} />
-            <span className="capitalize">{kind}</span>
-          </button>
-        ))}
-      </div>
-
       {/* Dotted grid background */}
       <div
         className="absolute inset-0 pointer-events-none"
@@ -707,36 +612,6 @@ function FreeformShapeCard({
         />
       )}
     </div>
-  );
-}
-
-// Shape glyph used in the toolbar.
-function ShapeGlyph({ kind }: { kind: ShapeKind }) {
-  if (kind === "circle") {
-    return (
-      <svg width="10" height="10" viewBox="0 0 10 10">
-        <circle cx="5" cy="5" r="4" fill="none" stroke="currentColor" strokeWidth="1.3" />
-      </svg>
-    );
-  }
-  if (kind === "ellipse") {
-    return (
-      <svg width="12" height="8" viewBox="0 0 12 8">
-        <ellipse cx="6" cy="4" rx="5" ry="3" fill="none" stroke="currentColor" strokeWidth="1.3" />
-      </svg>
-    );
-  }
-  if (kind === "diamond") {
-    return (
-      <svg width="10" height="10" viewBox="0 0 10 10">
-        <polygon points="5,1 9,5 5,9 1,5" fill="none" stroke="currentColor" strokeWidth="1.3" />
-      </svg>
-    );
-  }
-  return (
-    <svg width="10" height="10" viewBox="0 0 10 10">
-      <rect x="1" y="2" width="8" height="6" rx="1" fill="none" stroke="currentColor" strokeWidth="1.3" />
-    </svg>
   );
 }
 

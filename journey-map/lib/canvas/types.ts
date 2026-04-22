@@ -37,18 +37,11 @@ export type Board = {
   /** Set only when frameworkId is dynamic (user-generated). Kept on the Board so
    *  the dynamic registry can be rehydrated on reload before boards mount. */
   customConfig?: FrameworkConfig;
-  /** When set, this board was produced by the archetype-first pipeline: the
-   *  runtime `map` holds the archetype's typed document (TableDoc, etc.) and
-   *  the renderer dispatches through the archetype's Component. `frameworkId`
-   *  becomes a placeholder and the universal registry is bypassed. */
-  archetypeId?: string;
   title: string;
   /** Canvas-space top-left in CSS pixels (pre-zoom). */
   x: number;
   y: number;
-  /** For universal boards, a `UniversalMap`. For archetype boards, the
-   *  archetype's typed document (see `archetypeId`). Typed as UniversalMap
-   *  at the boundary; renderers narrow at the seam. */
+  /** UniversalMap for every board — rendered through `FrameworkGrid`. */
   map: UniversalMap;
   selection: UniversalSelection | null;
   status: BoardStatus;

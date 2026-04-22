@@ -19,6 +19,7 @@ import {
 import { kindTheme } from "@/lib/row-kind-theme";
 import { GeneratePanel } from "@/components/GeneratePanel";
 import { FrameworkLibrary } from "@/components/FrameworkLibrary";
+import { CopilotEmptyState } from "@/components/CopilotEmptyState";
 import type { GenerateEvent } from "@/lib/pipeline/events";
 import type { UniversalMap } from "@/lib/frameworks/universal/types";
 import type { FrameworkConfig } from "@/lib/frameworks/universal/config";
@@ -450,29 +451,7 @@ export function Copilot({
           </div>
         </div>
       ) : showEmptyState ? (
-        <div className="flex-1 overflow-y-auto chat-scroll px-5 pt-4 pb-3">
-          <div className="mb-4">
-            <div className="text-[14px] font-medium text-ink-primary leading-snug">
-              Pick a framework to get started
-            </div>
-            <div className="text-[12px] text-ink-muted mt-1 leading-snug">
-              Choose a template below, or click the "Custom (default)" card to
-              describe a new one from scratch. Once a framework is on the board
-              you can generate from a file or URL here in the Copilot.
-            </div>
-          </div>
-          <FrameworkLibrary
-            compact
-            selectedId={null}
-            onSelect={(id) => {
-              if (id === null) {
-                onOpenCustomDialog?.();
-                return;
-              }
-              onAddFromLibrary?.(id);
-            }}
-          />
-        </div>
+        <CopilotEmptyState onOpenCustomDialog={onOpenCustomDialog} />
       ) : (
         // Chat body
         <>

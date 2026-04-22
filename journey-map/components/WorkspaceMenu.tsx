@@ -28,9 +28,15 @@ type RenameTarget = { kind: "project" | "canvas"; id: string } | null;
 
 export type WorkspaceMenuProps = {
   pendingBoardId: string | null;
+  /** Fires after a board row is activated. Used by the landing page to
+   *  navigate into /canvas once the user picks a specific board to open. */
+  onAfterBoardSelect?: (boardId: string) => void;
 };
 
-export function WorkspaceMenu({ pendingBoardId }: WorkspaceMenuProps) {
+export function WorkspaceMenu({
+  pendingBoardId,
+  onAfterBoardSelect,
+}: WorkspaceMenuProps) {
   const {
     projects,
     activeProjectId,
@@ -462,6 +468,7 @@ export function WorkspaceMenu({ pendingBoardId }: WorkspaceMenuProps) {
                                       if (!isActiveProject) switchProject(p.id);
                                       if (!isActiveCanvas) switchCanvas(c.id);
                                       setActiveBoardId(b.id);
+                                      onAfterBoardSelect?.(b.id);
                                     }}
                                     className="flex-1 min-w-0 text-left inline-flex items-center gap-2"
                                   >

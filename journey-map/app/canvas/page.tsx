@@ -8,7 +8,8 @@ import { CustomFrameworkDialog } from "@/components/CustomFrameworkDialog";
 import { TopBar } from "@/components/TopBar";
 import { ZoomControls } from "@/components/ZoomControls";
 import { BoardFrame } from "@/components/BoardFrame";
-import { WorkspaceMenu } from "@/components/WorkspaceMenu";
+import { TemplateRail } from "@/components/TemplateRail";
+import { ToolsRail } from "@/components/ToolsRail";
 import { CanvasContextMenuProvider } from "@/components/ui/CanvasContextMenu";
 import {
   getFramework,
@@ -295,12 +296,7 @@ function CanvasPageInner() {
     setActiveBoardId(null);
   }
 
-  const copilotDisabled =
-    !activeBoard ||
-    !activeFramework ||
-    // Archetype boards are view-only until ops-over-archetype-doc ships —
-    // universal apply_operations can't speak TableDoc / CartesianDoc / etc.
-    Boolean(activeBoard?.archetypeId);
+  const copilotDisabled = !activeBoard || !activeFramework;
   const frameworkOptions = allFrameworks.map((fw) => ({ id: fw.id, label: fw.label }));
 
   return (
@@ -373,11 +369,7 @@ function CanvasPageInner() {
           hunting for another button. */}
       <Copilot
         frameworkId={activeFramework?.id ?? null}
-        frameworkLabel={
-          activeBoard?.archetypeId
-            ? `${activeBoard.archetypeId} (view-only)`
-            : (activeFramework?.label ?? "No framework")
-        }
+        frameworkLabel={activeFramework?.label ?? "No framework"}
         frameworkConfig={activeFramework?.config}
         customConfig={
           activeFramework && isDynamicFramework(activeFramework.id)
@@ -452,7 +444,76 @@ function CanvasPageInner() {
         disabled={copilotDisabled}
       />
 
-      <WorkspaceMenu pendingBoardId={pending?.boardId ?? null} />
+      {/* Template rail — collapsed icon by default, floating. Opens to a
+          searchable template picker. Custom framework synthesis lives in the
+          Copilot, not here. */}
+      <TemplateRail
+        activeFrameworkId={activeFramework?.id ?? null}
+        onPickTemplate={addBoardFromTemplate}
+      />
+
+      {/* Tools rail — insert primitives (cards, shapes, new freeform board).
+          Stacked below the Templates icon so the left rail reads top-down as
+          Workspace → Templates → Tools. Shapes only render properly on
+          freeform boards, so those rows are disabled on other layouts. */}
+      <ToolsRail
+        canInsert={!!(activeBoard && activeFramework)}
+        canInsertShapes={
+          !!(activeBoard && activeFramework) &&
+          activeFramework?.config.layout === "freeform"
+        }
+        onAddCard={() => {
+          if (!activeBoard || !activeFramework) return;
+          const firstCol = activeBoard.map.cols[0];
+          const firstRow = activeBoard.map.rows[0];
+          if (!firstCol || !firstRow) return;
+          const isFreeform = activeFramework.config.layout === "freeform";
+          // On freeform boards, seed an (x, y) on the card meta so it lands
+          // visibly in the drop zone instead of pinging off to (0,0). Non-
+          // freeform layouts lay cards out deterministically so this meta is
+          // ignored there.
+          const meta = isFreeform ? { x: "240", y: "220" } : undefined;
+          const result = activeFramework.applyOps(activeBoard.map, [
+            {
+              op: "addCard",
+              colId: firstCol.id,
+              rowId: firstRow.id,
+              text: "",
+              meta,
+            },
+          ] as never);
+          if (result.ok) updateBoardMap(activeBoard.id, result.map);
+        }}
+        onAddShape={(kind) => {
+          if (!activeBoard || !activeFramework) return;
+          const firstCol = activeBoard.map.cols[0];
+          const firstRow = activeBoard.map.rows[0];
+          if (!firstCol || !firstRow) return;
+          const defaults =
+            kind === "circle" || kind === "ellipse"
+              ? { w: 360, h: 360 }
+              : kind === "diamond"
+                ? { w: 500, h: 360 }
+                : { w: 400, h: 280 };
+          const result = activeFramework.applyOps(activeBoard.map, [
+            {
+              op: "addCard",
+              colId: firstCol.id,
+              rowId: firstRow.id,
+              text: `New ${kind}`,
+              meta: {
+                shapeKind: kind,
+                x: "240",
+                y: "200",
+                shapeWidth: String(defaults.w),
+                shapeHeight: String(defaults.h),
+              },
+            },
+          ] as never);
+          if (result.ok) updateBoardMap(activeBoard.id, result.map);
+        }}
+        onNewFreeformBoard={() => addBoardFromTemplate("freeform-canvas")}
+      />
 
       <ZoomControls onFit={fitAll} />
 

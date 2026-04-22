@@ -5,6 +5,27 @@ import type { UniversalMap, ConnectorRouting } from "./types";
 // All behaviour that varies between frameworks lives here.
 // ---------------------------------------------------------------------------
 
+/**
+ * How the framework should visually render. Three-layer synthesis: the
+ * structuringPrompt captures semantic meaning; this renderingPlan captures
+ * visual intent; the populate step translates both into per-card meta.
+ */
+export type RenderingPlan = {
+  /** Card visual treatment. "stacked" = flow vertically in cells (default).
+   *  "horizontal-bar" = pills along a time axis (Gantt). "dot" = markers at
+   *  (x,y) continuous positions (scatter). "mixed" = combinations. */
+  cardOrientation: "stacked" | "horizontal-bar" | "dot" | "mixed";
+  /** Continuity model. "cell-discrete" = one (col,row) per card. "axis-continuous"
+   *  = one continuous axis (time), cards carry meta.x. "xy-continuous" = both
+   *  axes continuous, cards carry meta.x AND meta.y. */
+  spatialContinuity: "cell-discrete" | "axis-continuous" | "xy-continuous";
+  /** Population density target for the populate step. */
+  density: "sparse" | "moderate" | "dense";
+  /** Plain-English visual brief. The populate step uses this as a top-priority
+   *  directive when deciding how to set each card's meta.x / meta.y / meta.width. */
+  summary: string;
+};
+
 export type CardMetaField = {
   key: string;
   label: string;
@@ -55,7 +76,23 @@ export type FrameworkConfig = {
     | { kind: "venn"; circles?: string[] }
     | { kind: "kano-curve" }
     | { kind: "funnel" }
-    | { kind: "concentric" };
+    | { kind: "concentric" }
+    | { kind: "coordinate-cross" };
+
+  // ── Rendering plan (visual layer) ──────────────────────────────────────────
+  /**
+   * How the framework should visually render. Separate from structuringPrompt
+   * (semantic layer). The renderer reads cardOrientation to switch between
+   * stacked-cards, horizontal-bars (Gantt/roadmap), and dots (scatter/cartesian)
+   * modes. The populate step reads `summary` as a top-priority visual directive.
+   *
+   * Well-known meta conventions it implies on Card.meta:
+   *   cardOrientation: "horizontal-bar" → card.meta.x (px offset in col) +
+   *     card.meta.width (px span). width === "0" renders as diamond (milestone).
+   *   cardOrientation: "dot" → card.meta.x + card.meta.y (both absolute within
+   *     the plot area, 0–1000 range).
+   */
+  renderingPlan?: RenderingPlan;
 
   // ── Vocabulary (used in prompts and UI labels) ──────────────────────────────
   colNoun: string;   // "Stage" | "Section" | "Competitor" | "Theme"

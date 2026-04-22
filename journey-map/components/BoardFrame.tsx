@@ -7,7 +7,6 @@ import { boardMenu } from "@/components/ui/canvas-menus";
 import type { Board } from "@/lib/canvas/types";
 import type { AnyFrameworkModule } from "@/lib/frameworks";
 import type { UniversalMap, UniversalSelection } from "@/lib/frameworks/universal/types";
-import { getArchetype } from "@/lib/archetypes";
 import { PendingBoardSkeleton } from "@/components/PendingBoardSkeleton";
 import { useZoom } from "@/lib/zoom-context";
 import {
@@ -73,52 +72,6 @@ function UniversalFrameworkComponent({
         onSelectionChange((sel ?? null) as UniversalSelection | null)
       }
       createdAt={board.createdAt}
-    />
-  );
-}
-
-function ArchetypeComponent({
-  archetypeId,
-  doc,
-  busy,
-  selection,
-  onSelectionChange,
-  createdAt,
-}: {
-  archetypeId: string;
-  doc: unknown;
-  busy?: boolean;
-  selection: UniversalSelection | null;
-  onSelectionChange: (sel: unknown) => void;
-  createdAt: number;
-}) {
-  const mod = getArchetype(archetypeId);
-  if (!mod) {
-    return (
-      <div className="text-sm text-rose-600">
-        Unknown archetype: {archetypeId}
-      </div>
-    );
-  }
-  const Component = mod.Component as React.ComponentType<{
-    doc: unknown;
-    onChange: (next: unknown) => void;
-    busy?: boolean;
-    selection: unknown;
-    onSelectionChange: (next: unknown) => void;
-    createdAt?: number;
-  }>;
-  return (
-    <Component
-      doc={doc}
-      onChange={() => {
-        /* MVP: archetype boards are view-only; edits land server-side in a
-         * future phase (ops-over-archetype-doc). */
-      }}
-      busy={busy}
-      selection={selection}
-      onSelectionChange={onSelectionChange}
-      createdAt={createdAt}
     />
   );
 }
@@ -461,40 +414,15 @@ export function BoardFrame({
         </div>
       </div>
 
-      {/* eslint-disable-next-line @typescript-eslint/no-use-before-define */}
-      {/* Board content — either the skeleton (pending-describe), the archetype
-          renderer (when archetypeId is set), or the universal framework grid.
-          Same visual shell so transitions are content swaps, not layout shifts. */}
-      {isPendingDescribe || (!framework && !board.archetypeId) ? (
+      {/* Board content — either the skeleton (pending-describe) or the
+          universal framework grid. Same visual shell so transitions are
+          content swaps, not layout shifts. */}
+      {isPendingDescribe || !framework ? (
         <PendingBoardSkeleton
           title={board.title || "Designing framework…"}
           prompt={board.pendingPrompt}
           statusLabel={pendingStatusLabel ?? "Working…"}
         />
-      ) : board.archetypeId ? (
-        <div
-          data-map-page
-          data-board-map-root
-          ref={boardRootRef}
-          className={[
-            "inline-block rounded-[28px] bg-canvas",
-            "px-10 py-10 md:px-12 md:py-12",
-            "shadow-panel ring-1 ring-border-medium/50",
-          ].join(" ")}
-        >
-          <ArchetypeComponent
-            archetypeId={board.archetypeId}
-            doc={board.map}
-            busy={busy}
-            selection={board.selection}
-            onSelectionChange={(sel) =>
-              onSelectionChange(
-                (sel ?? null) as unknown as UniversalSelection | null
-              )
-            }
-            createdAt={board.createdAt}
-          />
-        </div>
       ) : (
         <div
           data-map-page

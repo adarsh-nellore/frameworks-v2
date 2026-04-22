@@ -14,11 +14,7 @@ import { extractAtomsFromSource, type SourceAtoms } from "@/lib/pipeline/extract
 import { structureMap } from "@/lib/pipeline/structure";
 import { executeArrange } from "@/lib/frameworks/arrange-execute";
 import { applyOps } from "@/lib/frameworks/universal";
-import {
-  getArchetype,
-  hasArchetypes,
-} from "@/lib/archetypes";
-import { classifyIntent } from "@/lib/archetypes/classifier";
+import { synthesizeFramework } from "@/lib/frameworks/synthesize";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -134,9 +130,11 @@ export async function POST(req: Request) {
   }
 
   // Route selection:
-  //   - Explicit frameworkId (legacy / user picked a framework): universal path.
-  //   - "auto" or missing: classify, dispatch to archetype if ≥ threshold,
-  //     else fall back to universal journey-map for now.
+  //   - Explicit frameworkId: run the source-aware universal pipeline on that
+  //     pre-existing config (topic-populate OR atom-extract → structure).
+  //   - "auto" or missing: synthesize a brand-new FrameworkConfig from the
+  //     description + sources, then emit it as the result. The synthesis
+  //     helper handles populate internally.
   const autoMode =
     !parsed.frameworkId || parsed.frameworkId === "auto";
 
@@ -168,58 +166,41 @@ export async function POST(req: Request) {
         }
         emit({ phase: "ingesting", sourcesCount: sources.length });
 
-        // ── Classification (auto mode only) ──────────────────────────────────
-        if (autoMode && hasArchetypes()) {
-          const description = buildDescriptionForClassifier(
-            parsed,
-            sources
-          );
-          const routing = await classifyIntent(description);
-          emit({
-            phase: "classifying",
-            route: routing.kind,
-            archetypeId:
-              routing.kind === "archetype" ? routing.archetypeId : undefined,
-            scores: routing.scores,
+        // ── Auto mode: synthesize a new FrameworkConfig from the description
+        // + sources, then return it (populate happens inside synthesizeFramework
+        // via executeArrange with the sources in scope). The client registers
+        // the returned config via registerDynamicFramework so the board becomes
+        // editable by the universal op/arrange pipeline.
+        if (autoMode) {
+          emit({ phase: "synthesizing" });
+          const description = buildDescriptionForSynthesis(parsed, sources);
+          const synth = await synthesizeFramework({
+            description,
+            sources,
+            existingIds: [],
           });
-
-          if (routing.kind === "archetype") {
-            const archetype = getArchetype(routing.archetypeId);
-            if (archetype) {
-              const result = await archetype.pipeline({
-                description,
-                preamble: parsed.preamble,
-                sources,
-                emit: (ev) => emit(ev),
-              });
-              emit({
-                phase: "result",
-                summary: result.summary,
-                map: result.doc,
-                archetypeId: archetype.id,
-                debug: {
-                  mode: "two-pass",
-                  sourcesCount: sources.length,
-                  opsCount: result.opsCount,
-                  fidelityMode: parsed.fidelityMode,
-                  critiqueRan: parsed.fidelityMode,
-                  revisionRan: false,
-                },
-              });
-              controller.close();
-              return;
-            }
-          }
-
-          // Fallback: no archetype registered OR classifier below threshold.
-          // Use journey-map universal config as the fallback framework so the
-          // pipeline has something to populate.
-          framework = getFramework("journey-map");
+          emit({
+            phase: "result",
+            summary:
+              synth.populationSummary ??
+              `Generated "${synth.config.label}"`,
+            map: synth.populatedMap,
+            config: synth.config,
+            debug: {
+              mode: "two-pass",
+              sourcesCount: sources.length,
+              opsCount: synth.opsCount,
+              fidelityMode: parsed.fidelityMode,
+              critiqueRan: false,
+              revisionRan: false,
+            },
+          });
+          controller.close();
+          return;
         }
 
         if (!framework) {
-          // Defensive: autoMode with no archetypes registered should still
-          // reach the universal path above; this path handles misconfiguration.
+          // Defensive — non-auto path must have resolved a framework above.
           throw new Error("No framework resolved for generation");
         }
 
@@ -358,9 +339,9 @@ export async function POST(req: Request) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Build a single natural-language description of user intent for the
- *  archetype classifier. Prefers the first pasted text, falls back to source
+ *  synthesis agent. Prefers the first pasted text, falls back to source
  *  names + any title/persona hints in the preamble. */
-function buildDescriptionForClassifier(
+function buildDescriptionForSynthesis(
   parsed: ParsedRequest,
   sources: IngestedSource[]
 ): string {

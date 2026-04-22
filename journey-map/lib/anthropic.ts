@@ -32,3 +32,13 @@ export function getAgentModel(): string {
 export function getThemeNormalizeModel(): string {
   return process.env.THEME_NORMALIZE_MODEL || "claude-haiku-4-5";
 }
+
+/**
+ * Model for deep framework-reasoning stages (Theorist / Critic). Opus by default
+ * because these stages need to articulate what a framework IS and critique a
+ * board against that ideal — that's where reasoning quality actually matters.
+ * Override with REASONING_MODEL to fall back to Sonnet on keys without Opus.
+ */
+export function getReasoningModel(): string {
+  return process.env.REASONING_MODEL || "claude-opus-4-7";
+}
