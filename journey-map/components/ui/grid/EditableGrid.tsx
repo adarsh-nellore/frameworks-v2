@@ -80,6 +80,11 @@ type Props = {
   frameworkName?: string;
   /** Instance description for the Theorist (e.g. "Telemedicine visit, 5 swimlanes × 6 phases"). */
   instanceContext?: string;
+  /** When true, replace both the generic context-based buttons and custom
+   *  framework actions with a freeform prompt textarea + permission toggles.
+   *  The user's typed text is passed to the same `/api/preview/reason` pipeline
+   *  as the `task` field, so every prompt runs the framework-aware agent. */
+  promptMode?: boolean;
 };
 
 type ExecutorResultPayload = {
@@ -114,7 +119,19 @@ export function EditableGrid({
   customActions,
   frameworkName,
   instanceContext,
+  promptMode = false,
 }: Props) {
+  const [promptText, setPromptText] = useState("");
+  // Default `allowNewEdges` per structure: only ON for shapes where connectors
+  // carry meaning (hierarchy = parent/child tree; process-flow = handoffs).
+  // Matrix / timeline / brainstorm-dump express relationships through position
+  // or grouping, so edges there are visual noise by default.
+  const [promptFlags, setPromptFlags] = useState(() => ({
+    allowNewCells: true,
+    allowNewEdges: structureHint === "hierarchy" || structureHint === "process-flow",
+    allowClusters: true,
+    allowLabels: true,
+  }));
   const resolvedInitialConfig: EditableGridConfig = { ...DEFAULT_CONFIG, ...initialConfig };
   const [config, setConfig] = useState<EditableGridConfig>(resolvedInitialConfig);
   const [cells, setCells] = useState<EditableCell[]>(initialCells);
@@ -165,6 +182,36 @@ export function EditableGrid({
     for (const c of cells) m.set(`${c.row}:${c.col}`, c);
     return m;
   }, [cells]);
+
+  // Auto-responsive layout: when a cluster with a label anchors above any row
+  // > 0, the label floats above the cluster's top edge and will collide with
+  // cells in the row above unless `gap` has enough headroom. Compute the
+  // minimum required gap from the current scale + cluster label geometry and
+  // bump `gap` when we're short. This is deterministic math — no agent call
+  // needed. Runs on cluster change + scale change. Never shrinks gap.
+  useEffect(() => {
+    if (clusters.length === 0) return;
+    const hasLabelAboveRow0 = clusters.some((c) => {
+      if (!c.label) return false;
+      const members = c.cellIds
+        .map((id) => byId.get(id))
+        .filter((x): x is EditableCell => !!x);
+      if (members.length === 0) return false;
+      const minRow = Math.min(...members.map((m) => m.row));
+      return minRow > 0;
+    });
+    if (!hasLabelAboveRow0) return;
+    const clusterPad = Math.round(10 * S);
+    const labelOffset = Math.round(11 * S);
+    const labelFont = Math.max(9, 9.5 * S);
+    const labelBoxH = Math.ceil(labelFont + 6 * S); // matches px-1.5 py-0.5 + font
+    const buffer = Math.round(6 * S);
+    const needed = clusterPad + labelOffset + labelBoxH + buffer;
+    if (gap < needed) {
+      setConfig((prev) => (prev.gap >= needed ? prev : { ...prev, gap: needed }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clusters, cellH, cells]);
 
   // Clamp cells that fall outside the new grid bounds when config shrinks.
   useEffect(() => {
@@ -634,6 +681,30 @@ export function EditableGrid({
         </div>
 
         <div className="border-t border-border-soft pt-3">
+          {promptMode ? (
+            <PromptPanel
+              value={promptText}
+              onChange={setPromptText}
+              flags={promptFlags}
+              onFlagsChange={setPromptFlags}
+              loading={loadingAction === "Custom prompt"}
+              disabled={!!loadingAction || !frameworkName}
+              onRun={() => {
+                const task = promptText.trim();
+                if (!task) return;
+                runReasoningAction({
+                  key: "prompt",
+                  label: "Custom prompt",
+                  task,
+                  allowNewCells: promptFlags.allowNewCells,
+                  allowNewEdges: promptFlags.allowNewEdges,
+                  allowClusters: promptFlags.allowClusters,
+                  allowLabels: promptFlags.allowLabels,
+                });
+              }}
+            />
+          ) : (
+          <>
           <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-muted mb-2 flex items-center justify-between">
             <span>Agent actions</span>
             <span className="text-ink-muted/70 normal-case tracking-normal font-sans">live claude</span>
@@ -762,6 +833,8 @@ export function EditableGrid({
                 )}
               </div>
             </>
+          )}
+          </>
           )}
           {lastAction && (
             <div
@@ -1158,6 +1231,105 @@ function AgentButton({
         {loading && <Spinner />}
       </div>
       {hint && <div className="text-[10px] text-ink-muted mt-0.5 leading-tight">{hint}</div>}
+    </button>
+  );
+}
+
+type PromptFlags = {
+  allowNewCells: boolean;
+  allowNewEdges: boolean;
+  allowClusters: boolean;
+  allowLabels: boolean;
+};
+
+function PromptPanel({
+  value,
+  onChange,
+  flags,
+  onFlagsChange,
+  loading,
+  disabled,
+  onRun,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  flags: PromptFlags;
+  onFlagsChange: (f: PromptFlags) => void;
+  loading: boolean;
+  disabled: boolean;
+  onRun: () => void;
+}) {
+  function toggle(k: keyof PromptFlags) {
+    onFlagsChange({ ...flags, [k]: !flags[k] });
+  }
+  const canRun = !disabled && value.trim().length > 0;
+  return (
+    <>
+      <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-muted mb-2 flex items-center justify-between">
+        <span>Agent prompt</span>
+        <span className="text-ink-muted/70 normal-case tracking-normal font-sans">framework-aware</span>
+      </div>
+      <textarea
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && canRun) {
+            e.preventDefault();
+            onRun();
+          }
+        }}
+        placeholder={'Ask the agent to do something — e.g. "surface the 3 biggest tensions and mark them", "cluster by buying committee", or "add what a sharper practitioner would notice".'}
+        rows={6}
+        className="w-full text-[11px] leading-[1.45] text-ink-primary bg-white ring-1 ring-border-medium rounded-md px-2.5 py-2 focus:outline-none focus:ring-indigo-400 focus:ring-[1.5px] placeholder:text-ink-muted resize-none"
+        data-eg-interactive
+      />
+      <div className="mt-2 grid grid-cols-2 gap-1">
+        <FlagToggle label="New cells" active={flags.allowNewCells} onClick={() => toggle("allowNewCells")} />
+        <FlagToggle label="New edges" active={flags.allowNewEdges} onClick={() => toggle("allowNewEdges")} />
+        <FlagToggle label="Clusters" active={flags.allowClusters} onClick={() => toggle("allowClusters")} />
+        <FlagToggle label="Labels" active={flags.allowLabels} onClick={() => toggle("allowLabels")} />
+      </div>
+      <button
+        onClick={onRun}
+        disabled={!canRun}
+        className={[
+          "w-full mt-2 rounded-md py-1.5 text-[11px] font-medium transition-colors flex items-center justify-center gap-2",
+          canRun
+            ? "bg-indigo-600 text-white hover:bg-indigo-700"
+            : "bg-indigo-600/40 text-white cursor-not-allowed",
+        ].join(" ")}
+      >
+        {loading ? <Spinner /> : null}
+        {loading ? "Running…" : "Run prompt"}
+        {!loading && (
+          <span className="opacity-60 font-mono text-[9.5px] tracking-wider">⌘↵</span>
+        )}
+      </button>
+    </>
+  );
+}
+
+function FlagToggle({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={[
+        "text-[10.5px] rounded ring-1 py-1 transition-colors",
+        active
+          ? "bg-indigo-50 text-indigo-800 ring-indigo-300"
+          : "bg-white text-ink-muted ring-border-soft hover:ring-border-medium",
+      ].join(" ")}
+    >
+      {active ? "● " : "○ "}
+      {label}
     </button>
   );
 }

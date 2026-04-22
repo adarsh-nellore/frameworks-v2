@@ -752,6 +752,7 @@ function GridLayout(p: LayoutProps) {
                       onCardContextMenu={p.onCardContextMenu}
                       onSlotContextMenu={p.onSlotContextMenu}
                       metaFields={config.cardMetaFields}
+                      config={config}
                     />
                   );
                 })}
@@ -800,6 +801,7 @@ function CellSlotGrid({
   onCardContextMenu,
   onSlotContextMenu,
   metaFields,
+  config,
 }: {
   colId: string;
   rowId: string;
@@ -820,6 +822,7 @@ function CellSlotGrid({
   onCardContextMenu: (e: React.MouseEvent, cardId: string) => void;
   onSlotContextMenu: (e: React.MouseEvent, colId: string, rowId: string) => void;
   metaFields?: CardMetaField[];
+  config?: FrameworkConfig;
 }) {
   const drop = useDroppable({
     id: `slot:${colId}:${rowId}`,
@@ -830,8 +833,8 @@ function CellSlotGrid({
   // positioning hints, render those cards as absolute-positioned bars/dots/
   // diamonds via PresentedCard. Stacked cards (no meta.x) still render below
   // in normal flow so frameworks can mix styles within a single cell.
-  const positioned = cards.filter((c) => inferPresentMode(c) !== "stacked");
-  const stacked = cards.filter((c) => inferPresentMode(c) === "stacked");
+  const positioned = cards.filter((c) => inferPresentMode(c, config) !== "stacked");
+  const stacked = cards.filter((c) => inferPresentMode(c, config) === "stacked");
   const hasPositioned = positioned.length > 0;
 
   return (
@@ -856,7 +859,7 @@ function CellSlotGrid({
       ) : (
         <>
           {positioned.map((card) => {
-            const mode = inferPresentMode(card);
+            const mode = inferPresentMode(card, config);
             if (mode === "stacked") return null;
             return (
               <PresentedCard
@@ -1007,6 +1010,7 @@ function KanbanLayout(p: LayoutProps) {
                       onCardContextMenu={p.onCardContextMenu}
                       onSlotContextMenu={p.onSlotContextMenu}
                       metaFields={config.cardMetaFields}
+                      config={config}
                     />
                   );
                 })
@@ -1031,6 +1035,7 @@ function KanbanLayout(p: LayoutProps) {
                   onCardContextMenu={p.onCardContextMenu}
                   onSlotContextMenu={p.onSlotContextMenu}
                   metaFields={config.cardMetaFields}
+                  config={config}
                 />
                 )}
               </SectionContainer>
@@ -1237,6 +1242,7 @@ function MatrixLayout(p: LayoutProps) {
                         onCardContextMenu={p.onCardContextMenu}
                         onSlotContextMenu={p.onSlotContextMenu}
                         metaFields={config.cardMetaFields}
+                        config={config}
                         compact
                       />
                     </SectionContainer>
@@ -1293,6 +1299,7 @@ function ColCardStack({
   onSlotContextMenu,
   metaFields,
   compact = false,
+  config,
 }: {
   colId: string;
   rowId: string;
@@ -1314,6 +1321,7 @@ function ColCardStack({
   onSlotContextMenu: (e: React.MouseEvent, colId: string, rowId: string) => void;
   metaFields?: CardMetaField[];
   compact?: boolean;
+  config?: FrameworkConfig;
 }) {
   const drop = useDroppable({
     id: `slot:${colId}:${rowId}`,
@@ -1322,8 +1330,8 @@ function ColCardStack({
   const sorted = [...cards].sort((a, b) => a.order - b.order);
 
   // Phase C: split positioned cards (meta.x set) from stacked cards.
-  const positioned = sorted.filter((c) => inferPresentMode(c) !== "stacked");
-  const stacked = sorted.filter((c) => inferPresentMode(c) === "stacked");
+  const positioned = sorted.filter((c) => inferPresentMode(c, config) !== "stacked");
+  const stacked = sorted.filter((c) => inferPresentMode(c, config) === "stacked");
   const hasPositioned = positioned.length > 0;
 
   return (
@@ -1349,7 +1357,7 @@ function ColCardStack({
       ) : (
         <>
           {positioned.map((card) => {
-            const mode = inferPresentMode(card);
+            const mode = inferPresentMode(card, config);
             if (mode === "stacked") return null;
             return (
               <PresentedCard
@@ -1419,6 +1427,7 @@ function SubGroup({
   onCardContextMenu,
   onSlotContextMenu,
   metaFields,
+  config,
 }: {
   label: string;
   kind: string;
@@ -1440,6 +1449,7 @@ function SubGroup({
   onCardContextMenu: (e: React.MouseEvent, cardId: string) => void;
   onSlotContextMenu: (e: React.MouseEvent, colId: string, rowId: string) => void;
   metaFields?: CardMetaField[];
+  config?: FrameworkConfig;
 }) {
   const theme = kindTheme(kind);
   const Icon = theme.Icon;
@@ -1482,6 +1492,7 @@ function SubGroup({
         onSlotContextMenu={onSlotContextMenu}
         metaFields={metaFields}
         compact
+        config={config}
       />
     </div>
   );

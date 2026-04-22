@@ -15,6 +15,13 @@ import { structureMap } from "@/lib/pipeline/structure";
 import { executeArrange } from "@/lib/frameworks/arrange-execute";
 import { applyOps } from "@/lib/frameworks/universal";
 import { synthesizeFramework } from "@/lib/frameworks/synthesize";
+import {
+  shouldInterpret,
+  interpretPrompt,
+  formatInterpreterNotes,
+} from "@/lib/agents/prompt-interpreter";
+import { runShapePlanner, renderShapePlanBlock } from "@/lib/agents/shape-planner";
+import { buildSourceDigest } from "@/lib/agents/source-digest";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -173,7 +180,26 @@ export async function POST(req: Request) {
         // editable by the universal op/arrange pipeline.
         if (autoMode) {
           emit({ phase: "synthesizing" });
-          const description = buildDescriptionForSynthesis(parsed, sources);
+          const baseDescription = await buildDescriptionForSynthesis(parsed, sources);
+
+          // Shape planner: forces per-subject shape variation. Runs before
+          // synth so the synth agent gets an authoritative `# Shape plan`
+          // block to honor. Fails soft — if the planner returns null, we
+          // skip this augmentation entirely. See lib/agents/shape-planner.ts.
+          let description = baseDescription;
+          try {
+            const digest = buildSourceDigest(sources);
+            const plan = await runShapePlanner({
+              description: baseDescription,
+              sourcesSummary: digest.text,
+            });
+            if (plan) {
+              description = `${baseDescription}\n\n${renderShapePlanBlock(plan)}`;
+            }
+          } catch (e) {
+            console.warn("[generate] shape-planner step errored — continuing without plan:", e);
+          }
+
           const synth = await synthesizeFramework({
             description,
             sources,
@@ -341,20 +367,107 @@ export async function POST(req: Request) {
 /** Build a single natural-language description of user intent for the
  *  synthesis agent. Prefers the first pasted text, falls back to source
  *  names + any title/persona hints in the preamble. */
-function buildDescriptionForSynthesis(
+async function buildDescriptionForSynthesis(
   parsed: ParsedRequest,
   sources: IngestedSource[]
-): string {
+): Promise<string> {
   const pasted = parsed.inputs.find((i) => i.type === "paste");
+  let base: string;
   if (pasted && "text" in pasted && pasted.text.trim()) {
     const trimmed = pasted.text.trim();
-    return parsed.preamble
-      ? `${parsed.preamble}\n\n${trimmed}`
-      : trimmed;
+    base = parsed.preamble ? `${parsed.preamble}\n\n${trimmed}` : trimmed;
+  } else {
+    const sourceNames = sources.map((s) => s.name).filter(Boolean).join(", ");
+    const head = parsed.preamble ?? "";
+    base = `${head}\n\nSources provided: ${sourceNames}`.trim();
   }
-  const sourceNames = sources.map((s) => s.name).filter(Boolean).join(", ");
-  const head = parsed.preamble ?? "";
-  return `${head}\n\nSources provided: ${sourceNames}`.trim();
+
+  // Stage 1 — deterministic shape-keyword detector. Free, instant. Catches
+  // explicit cases ("competitive matrix", "journey map", "swimlane", "2x2").
+  const hint = detectShapeHint(base);
+  const withHint = hint ? `${base}\n\n${hint}` : base;
+
+  // Stage 2 — Haiku interpreter for terse / rough prompts. Gated by
+  // shouldInterpret() so longer prompts don't pay the latency tax. SKIPPED
+  // when the prompt already contains a `# Constraints (user-confirmed)`
+  // block, because that means the conversational clarifier already ran and
+  // the user's answers are strictly better than anything the interpreter
+  // would infer silently. Fails soft — interpreter errors pass through to
+  // the synth agent unchanged. Only appends; never rewrites the user's text.
+  const hasUserConstraints = /^#\s*Constraints\s*\(user-confirmed\)/m.test(base);
+  if (!hasUserConstraints && shouldInterpret(base)) {
+    const interp = await interpretPrompt(base);
+    if (interp) {
+      const notes = formatInterpreterNotes(interp);
+      if (notes) return `${withHint}\n\n${notes}`;
+    }
+  }
+
+  return withHint;
+}
+
+/** Detect explicit shape words in the user's prompt and surface them to the
+ *  synth agent as a layout hint. The synth prompt already contains layout
+ *  examples and a decision rubric, but it has no signal-boost when the user
+ *  says the shape out loud. This is low-risk (a single line appended) and
+ *  keeps the agent free to override when the prompt is ambiguous.
+ *
+ *  NOT a framework-name mapping — we never say "treat this as journey-map".
+ *  We just echo the shape word the user used and bind it to a layout. */
+function detectShapeHint(description: string): string | null {
+  const text = description.toLowerCase();
+  const matchers: Array<{ layout: "grid" | "kanban" | "matrix" | "freeform"; patterns: RegExp[] }> = [
+    {
+      layout: "grid",
+      patterns: [
+        /\bjourney\s*map\b/,
+        /\bservice\s*blueprint\b/,
+        /\bprocess\s*map\b/,
+        /\buser\s*story\s*map\b/,
+        /\bstory\s*map\b/,
+        /\bswim\s*lane[s]?\b/,
+        /\bswimlane[s]?\b/,
+        /\bexperience\s*map\b/,
+      ],
+    },
+    {
+      layout: "matrix",
+      patterns: [
+        /\bcompetitive\s*matrix\b/,
+        /\bcompetitive\s*map\b/,
+        /\bcomparison\s*matrix\b/,
+        /\b2\s*x\s*2\b/,
+        /\btwo\s*by\s*two\b/,
+        /\bquadrant[s]?\b/,
+        /\bswot\b/,
+        /\beisenhower\b/,
+        /\bimpact.{0,10}effort\b/,
+        /\beffort.{0,10}impact\b/,
+      ],
+    },
+    {
+      layout: "kanban",
+      patterns: [
+        /\bkanban\b/,
+        /\baffinity\s*diagram\b/,
+        /\bcard\s*sort\b/,
+        /\bnow.{0,3}next.{0,3}later\b/,
+      ],
+    },
+    {
+      layout: "freeform",
+      patterns: [/\bmind\s*map\b/, /\bconcept\s*map\b/, /\bfreeform\s*canvas\b/, /\bmiro\b/],
+    },
+  ];
+  for (const m of matchers) {
+    for (const p of m.patterns) {
+      const hit = text.match(p);
+      if (hit) {
+        return `User explicitly requested a ${hit[0].trim()} — strongly prefer layout: "${m.layout}". If the shape genuinely contradicts the subject matter, override, but default to honoring the requested shape.`;
+      }
+    }
+  }
+  return null;
 }
 
 /** Recognise a single-paste, short-text input as a topic prompt rather than

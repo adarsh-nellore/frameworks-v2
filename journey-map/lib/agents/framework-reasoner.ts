@@ -44,10 +44,12 @@ export async function runFrameworkAction(input: ReasonInput): Promise<ExecutorOu
       : input.structureHint === "hierarchy"
         ? "Edges encode parent→child. Don't invert them. When adding cells, connect them into the tree."
         : input.structureHint === "matrix"
-          ? "Both row and column positions carry meaning. Preserve both axes."
+          ? "Both row and column positions carry meaning; that IS the relationship. Do NOT add edges between cells — a matrix expresses relationships through (row, col) position, not connectors. Preserve both axes."
           : input.structureHint === "timeline"
-            ? "The column axis represents time. Preserve temporal order."
-            : "";
+            ? "The column axis represents time. Preserve temporal order. Do NOT add edges between cells — temporal adjacency is already expressed by column position."
+            : input.structureHint === "brainstorm-dump"
+              ? "Cells are loose ideas, not a diagram. Do NOT add edges unless the task EXPLICITLY asks for relationships (e.g., 'show dependencies', 'link causes to effects'). Clusters are the right tool for grouping; connectors are visual noise here."
+              : "";
 
   const system = `You are an expert in ${input.frameworkName}. A great instance of this framework exposes the structure that makes it work — not just a catalog of items, but the relationships, moments, and dependencies that a first-rate practitioner would highlight. A mediocre instance merely lists things.
 

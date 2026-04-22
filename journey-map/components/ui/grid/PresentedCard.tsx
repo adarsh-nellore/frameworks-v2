@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { kindTheme } from "@/lib/row-kind-theme";
 import { renderCellText } from "@/lib/cell-text";
 import type { Card } from "@/lib/frameworks/universal/types";
+import type { FrameworkConfig } from "@/lib/frameworks/universal/config";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // PresentedCard — renders a Card as a horizontal bar, a dot, or a diamond
@@ -26,7 +27,23 @@ import type { Card } from "@/lib/frameworks/universal/types";
 
 export type PresentMode = "stacked" | "bar" | "dot" | "diamond";
 
-export function inferPresentMode(card: Card): PresentMode {
+/** Decide how a card renders.
+ *
+ *  Positioning via meta.x / meta.y is ONLY honored when the framework has
+ *  explicitly opted in via `renderingPlan.cardOrientation` being
+ *  "horizontal-bar" (Gantt), "dot" (Cartesian), or "mixed". On every other
+ *  layout — grid, kanban, matrix without a Cartesian/Gantt plan — cards are
+ *  force-stacked regardless of meta, so agent-emitted x/y becomes inert
+ *  instead of producing dot/bullet renders in slots where positioning makes
+ *  no sense. Freeform boards go through FreeformLayout and don't hit this
+ *  path, so no special-case needed there. */
+export function inferPresentMode(card: Card, config?: FrameworkConfig): PresentMode {
+  const orientation = config?.renderingPlan?.cardOrientation;
+  const allowPositioned =
+    orientation === "horizontal-bar" ||
+    orientation === "dot" ||
+    orientation === "mixed";
+  if (!allowPositioned) return "stacked";
   const m = card.meta;
   if (!m || m.x === undefined || m.x === null) return "stacked";
   const w = m.width;
@@ -35,8 +52,8 @@ export function inferPresentMode(card: Card): PresentMode {
   return "dot";
 }
 
-export function hasAnyPositionedCard(cards: Card[]): boolean {
-  return cards.some((c) => inferPresentMode(c) !== "stacked");
+export function hasAnyPositionedCard(cards: Card[], config?: FrameworkConfig): boolean {
+  return cards.some((c) => inferPresentMode(c, config) !== "stacked");
 }
 
 type Props = {

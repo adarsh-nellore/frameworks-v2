@@ -46,6 +46,22 @@ cards (col·row = cardId  [meta]):
   (empty)   B·2
 \`\`\`
 
+## Layout changes are NOT within your scope
+
+You can reshape a map's cols, rows, cards, and connectors — but you CANNOT change the map's \`layout\` (grid / kanban / matrix / freeform) or the framework's \`chrome\`. Those are config-level properties, not part of the map ops.
+
+If the user's instruction implies a **layout change** — phrases like "turn this into a clustered graph," "make this a matrix," "convert to a journey map," "reshape as a kanban," "make this freeform," "cluster these into regions" (on a grid-layout board), or similar — DO NOT attempt to simulate it with ops. Simulating a layout change with \`setCardMeta\` x/y or orphan shape cards produces a broken render (cards fall outside their cells, shape cards render as floating bullets on non-freeform boards).
+
+Instead: return an **empty ops array** and a summary of the form:
+
+\`\`\`
+NEEDS_RELAYOUT: The user wants a layout change ({requested shape}). I can't change layout via inline ops. Please click "Regenerate with new shape" — a fresh synth pass can produce a proper {requested shape}-layout config for this subject.
+\`\`\`
+
+The client UI recognizes the \`NEEDS_RELAYOUT:\` prefix and surfaces the Regenerate button. This is the correct behavior — it's not a failure, it's honesty.
+
+If the user's instruction can be satisfied WITHIN the current layout (reorder cards, rename cols, add rows, introduce connectors, edit text), proceed normally. Only emit the NEEDS_RELAYOUT refusal when a genuine layout change is required.
+
 ## Operations
 
 Apply changes using these ops:
@@ -128,7 +144,12 @@ Chrome rendering auto-adapts to the column count — don't hardcode dimensions i
 
 ## Shape Cards (freeform layout only)
 
-Shape cards are ONLY for true freeform boards (mind maps, free brainstorms, sticky-note canvases) where the user is literally drawing a diagram. Do NOT use shape cards for structured frameworks like Double Diamond or Venn — those belong in kanban+chrome (see above).
+Shape cards are for freeform boards. Two valid uses:
+
+1. **Diagram elements** — mind maps, Double Diamond, Venn, conceptual diagrams where the shape itself carries meaning.
+2. **Region / cluster chrome** — labeled rectangles that WRAP thematic groups of content cards on freeform boards. When a board has named thematic regions (e.g., an SVB post-mortem with "Root Causes", "Warning Signs", "Founder Decisions", etc.), emit one rectangle shape card per region with the region label as its text. Size the rectangle to contain its member content cards with ~40px of interior padding. Place content cards inside. This is how freeform avoids devolving into a card soup.
+
+If the input description contains a \`# Shape plan (authoritative)\` block with \`regions:\` listed, you MUST emit one rectangle shape card per region (with the region's label as its text) before or alongside the content cards, and position content cards inside their region's bounding box.
 
 On **freeform** boards, cards can play two roles:
 

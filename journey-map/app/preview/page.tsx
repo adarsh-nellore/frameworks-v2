@@ -16,6 +16,13 @@ type PreviewEntry = {
 
 const PREVIEWS: PreviewEntry[] = [
   {
+    href: "/preview/prompt-lab",
+    title: "Prompt lab",
+    subtitle: "Generate a board from a prompt, then iterate with custom prompts",
+    hint: "auto",
+    shape: "Live /api/generate · EditableGrid in prompt mode",
+  },
+  {
     href: "/preview/service-blueprint",
     title: "Service blueprint",
     subtitle: "Telemedicine visit, end-to-end",

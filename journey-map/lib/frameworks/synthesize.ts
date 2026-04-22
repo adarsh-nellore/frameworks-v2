@@ -217,17 +217,23 @@ Set \`meta.stepKind\` on cards via the \`meta\` field on \`addCard\` (\`"start" 
       base +
       visualBrief +
       `
-**This is a freeform spatial framework.** Before populating content cards, decide whether the framework's shape implies background geometry. Most named spatial frameworks do — examples:
-- Double Diamond → two \`diamond\` shape cards (Discover→Define on the left, Develop→Deliver on the right)
-- Venn / Ikigai → 2–3 overlapping \`circle\` shape cards
-- Kano Model → 3 horizontal \`rectangle\`/\`ellipse\` band shape cards
-- Business Motivation Model / SWOT-as-regions → \`rectangle\` shape cards
+**This is a freeform spatial framework.** Freeform WITHOUT region chrome becomes a card soup. You MUST decide what shape cards to emit before placing content:
 
-If the framework's identity implies a spatial shape, emit the shape cards FIRST via \`addCard\` with meta keys \`shapeKind\`, \`x\`, \`y\`, \`shapeWidth\`, \`shapeHeight\`. The card's text is the shape's label. Use a 1600×1000 board: shapes typically 400–600px wide/tall.
+**Case A — named thematic regions** (post-mortems, strategy boards, opportunity landscapes, exec planning boards, anything with N named clusters of ideas that don't map to clean x/y axes):
+- Emit ONE \`rectangle\` shape card per region. The card's text is the region label (e.g., "Root Causes", "Warning Signs", "Founder Decisions").
+- Lay the rectangles out on a 1600×1000 canvas in a clean grid. Common layouts: 2×3 (3 rectangles wide × 2 tall, each ~500×450 with 40px gaps), 3×2, 4×1 strip, or center+petals for hub-and-spoke topics.
+- Each rectangle should be ~500×450px typical, 600×500 if dense. Leave 40–60px between rectangles so labels and cards inside don't collide.
+- Then emit 4–8 content cards inside each region, setting \`meta.x\`/\`meta.y\` so they sit INSIDE the rectangle's bounding box with ~30px interior padding. Stack content cards vertically inside the region, 2 columns × 3–4 rows per region when there are many.
+- **Check the description for a \`# Shape plan (authoritative)\` block.** If it lists \`regions:\`, emit EXACTLY those regions as rectangle shape cards in the order given. If \`regionLayout\` is specified (e.g., "3x2 grid"), follow it literally.
 
-Then emit 2–6 content cards per shape region, setting each content card's \`meta.x\`/\`meta.y\` so it visually sits INSIDE the shape. Pick a col id for each content card based on which shape / region it belongs to (this is how AI later rearrangements track regional intent).
+**Case B — named geometric diagram** (Double Diamond → two diamonds; Venn/Ikigai → overlapping circles; Kano Model → horizontal bands):
+- Emit the diagram-appropriate shape cards (\`diamond\`, \`circle\`, \`ellipse\`, or \`rectangle\`) with meaningful overlap/positioning.
+- Place content cards inside or on the boundaries of their shape.
 
-If the framework is a loose mind-map / brainstorm without implied geometry, skip the shape cards and place 8–15 content cards with x/y laid out in clusters by col.
+**Case C — loose mind-map / brainstorm without implied geometry**:
+- Skip shape cards entirely. Place 8–15 content cards with x/y clustered by col.
+
+In all cases: emit shape cards FIRST (lower z-order = background), content cards second. Pick a col id for each content card based on which shape / region it belongs to (this is how AI later rearrangements track regional intent).
       `.trim()
     );
   }

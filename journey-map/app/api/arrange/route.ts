@@ -4,6 +4,70 @@ import { validateFrameworkConfig } from "@/lib/frameworks/custom/validate";
 import type { FrameworkConfig } from "@/lib/frameworks/universal/config";
 import { executeArrange } from "@/lib/frameworks/arrange-execute";
 import { validateMap } from "@/lib/frameworks/universal";
+import type { Op } from "@/lib/frameworks/universal/ops";
+
+// Keys on card.meta that trigger positioned card rendering (Gantt bars,
+// Cartesian dots, freeform absolute positions, shape-card chrome). When the
+// active layout / renderingPlan doesn't opt into positioned rendering, these
+// keys have no effect on render and only serve to confuse future turns — so
+// we drop any arrange op that tries to set them. Values kept in sync with
+// PresentedCard's inferPresentMode and FreeformLayout's shape-card schema.
+const POSITIONING_META_KEYS = new Set([
+  "x",
+  "y",
+  "width",
+  "height",
+  "shapeKind",
+  "shapeWidth",
+  "shapeHeight",
+]);
+
+/** True when the given config's layout+renderingPlan legitimately use
+ *  positioned cards. Only then are meta.x/y/etc. respected by the renderer. */
+function layoutAllowsPositioning(config: FrameworkConfig): boolean {
+  if (config.layout === "freeform") return true;
+  const orientation = config.renderingPlan?.cardOrientation;
+  return (
+    orientation === "horizontal-bar" ||
+    orientation === "dot" ||
+    orientation === "mixed"
+  );
+}
+
+/** Drop any op that would set positioning meta on a layout that doesn't use
+ *  it. Returns the filtered ops plus a count of what was dropped so the
+ *  caller can surface it in the summary. Silent filtering would be worse
+ *  than useless — the client status banner should tell the user. */
+function stripPositioningOps(
+  ops: Op[],
+  config: FrameworkConfig
+): { ops: Op[]; stripped: number } {
+  if (layoutAllowsPositioning(config)) return { ops, stripped: 0 };
+  let stripped = 0;
+  const kept: Op[] = [];
+  for (const op of ops) {
+    if (op.op === "setCardMeta" && POSITIONING_META_KEYS.has(op.key)) {
+      stripped++;
+      continue;
+    }
+    if (op.op === "addCard" && op.meta) {
+      const cleanMeta: Record<string, string> = {};
+      let hadPos = false;
+      for (const [k, v] of Object.entries(op.meta)) {
+        if (POSITIONING_META_KEYS.has(k)) {
+          hadPos = true;
+          continue;
+        }
+        cleanMeta[k] = v;
+      }
+      if (hadPos) stripped++;
+      kept.push({ ...op, meta: Object.keys(cleanMeta).length ? cleanMeta : undefined });
+      continue;
+    }
+    kept.push(op);
+  }
+  return { ops: kept, stripped };
+}
 
 export const runtime = "nodejs";
 
@@ -91,5 +155,10 @@ export async function POST(req: Request) {
     return NextResponse.json(payload, { status });
   }
 
-  return NextResponse.json({ summary: result.summary, ops: result.ops });
+  const { ops: filteredOps, stripped } = stripPositioningOps(result.ops, config);
+  const summary =
+    stripped > 0
+      ? `${result.summary}\n(Dropped ${stripped} positioning op${stripped === 1 ? "" : "s"} that don't apply to this layout.)`
+      : result.summary;
+  return NextResponse.json({ summary, ops: filteredOps });
 }
