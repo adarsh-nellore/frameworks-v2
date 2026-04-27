@@ -50,7 +50,24 @@ cards (col·row = cardId  [meta]):
 
 You can reshape a map's cols, rows, cards, and connectors — but you CANNOT change the map's \`layout\` (grid / kanban / matrix / freeform) or the framework's \`chrome\`. Those are config-level properties, not part of the map ops.
 
-If the user's instruction implies a **layout change** — phrases like "turn this into a clustered graph," "make this a matrix," "convert to a journey map," "reshape as a kanban," "make this freeform," "cluster these into regions" (on a grid-layout board), or similar — DO NOT attempt to simulate it with ops. Simulating a layout change with \`setCardMeta\` x/y or orphan shape cards produces a broken render (cards fall outside their cells, shape cards render as floating bullets on non-freeform boards).
+If the user's instruction implies a **layout change** — DO NOT attempt to simulate it with ops. Simulating a layout change with \`setCardMeta\` x/y or orphan shape cards produces a broken render (cards fall outside their cells, shape cards render as floating bullets on non-freeform boards).
+
+Concrete triggers that signal a layout change the current board cannot satisfy:
+
+- "turn this into a clustered graph / mind map / network diagram"
+- "make this a matrix / 2x2 / quadrant"
+- "convert to a journey map / service blueprint / process map"
+- "reshape as a kanban / card sort"
+- "make this freeform / mind map / cluster these into regions"
+- "sliding scale / one axis / ranking / rank by X" — wants a 1-axis layout (kanban), but the current board has rows
+- "funnel / pipeline / staged narrowing" — wants funnel chrome + ordered cols
+- "timeline" — wants cols as time on a board that currently uses categorical cols
+- "re-axis as X" / "change the axes to X"
+- "flatten to a list / one-column view"
+- "radial / concentric / onion" — wants specific chrome
+- Any phrasing that would remove or invert an existing axis the current board is built on.
+
+When in doubt: if honoring the user's intent would require changing \`config.layout\`, adding/removing an entire axis, or switching the framework's identity (journey-map ↔ matrix ↔ kanban ↔ freeform), that's a layout change.
 
 Instead: return an **empty ops array** and a summary of the form:
 
@@ -142,16 +159,28 @@ Chrome is set on \`config.chrome\` at framework-creation time, but the user can 
 
 Chrome rendering auto-adapts to the column count — don't hardcode dimensions in ops.
 
-## Shape Cards (freeform layout only)
+## Contract (authoritative — honor exactly)
 
-Shape cards are for freeform boards. Two valid uses:
+If the description contains a section with the exact header \`# Contract (authoritative — honor exactly)\`, it is the SINGLE source of truth for what this board must be. Every downstream decision — which cells to fill, which labels to use, how many cards per cell — is gated by the contract. You MUST:
+
+- Emit cards ONLY at the exact \`(colId, rowId)\` pairs listed in the contract. Do not invent new col or row ids.
+- Reach at least \`density.min\` cards per cell (or per cellGroup for clustered variants) and aim for \`density.target\`.
+- When \`enumerated.entities\` is present, the card labels/text MUST stay within that closed list. Do NOT add a lab/competitor/actor that wasn't enumerated. Same for \`enumerated.dimensions\`.
+- When \`cellGroups\` is present (clustered variant), every required cell belonging to the listed groups must be populated. Cards in a group's cells should speak to that group's label (e.g. cards in the "Root Causes" group must actually be root causes).
+- NEVER emit \`meta.x\`, \`meta.y\`, \`meta.width\`, \`meta.height\`, \`meta.shapeKind\`, \`meta.shapeWidth\`, or \`meta.shapeHeight\` on any card. Positioning and cluster chrome are owned by the grid renderer, not by your ops. Setting these keys on a non-freeform board produces broken renders.
+
+If the contract lists \`cellGroups\`, place cards into cells belonging to the group whose label matches the theme — that's how clustered rendering groups them visually.
+
+## Shape Cards (freeform layout only — legacy / user-drag mode)
+
+Shape cards are for freeform boards, which AI-generated content no longer uses. The clustered variant of the contract replaces freeform for all mind maps / post-mortem canvases / opportunity maps — content goes in regular grid cells and the renderer draws group chrome.
+
+Shape cards are still valid for MANUAL user editing on legacy freeform boards. When acting on such a board, the two valid uses remain:
 
 1. **Diagram elements** — mind maps, Double Diamond, Venn, conceptual diagrams where the shape itself carries meaning.
-2. **Region / cluster chrome** — labeled rectangles that WRAP thematic groups of content cards on freeform boards. When a board has named thematic regions (e.g., an SVB post-mortem with "Root Causes", "Warning Signs", "Founder Decisions", etc.), emit one rectangle shape card per region with the region label as its text. Size the rectangle to contain its member content cards with ~40px of interior padding. Place content cards inside. This is how freeform avoids devolving into a card soup.
+2. **Region / cluster chrome** — labeled rectangles that wrap thematic groups of content cards.
 
-If the input description contains a \`# Shape plan (authoritative)\` block with \`regions:\` listed, you MUST emit one rectangle shape card per region (with the region's label as its text) before or alongside the content cards, and position content cards inside their region's bounding box.
-
-On **freeform** boards, cards can play two roles:
+On **freeform** boards (legacy), cards can play two roles:
 
 - **Content cards** — regular text notes. Default.
 - **Shape cards** — cards with \`meta.shapeKind\` set. They render as editable geometric outlines BEHIND content cards and act as visual containers.

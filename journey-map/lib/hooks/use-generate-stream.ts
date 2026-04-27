@@ -27,6 +27,10 @@ export type GenerateInput = {
   persona?: string;
   /** When true, adds the critique+revision pass (30–60s slower, higher quality). */
   fidelityMode?: boolean;
+  /** Optional pre-computed shape contract from /api/preview/clarify. When
+   *  present, /api/generate skips its own shape-planner call and uses this
+   *  directly — saves ~20–25s of round-trip time per generation. */
+  contract?: unknown;
 };
 
 export type UseGenerateStreamOptions = {
@@ -81,6 +85,14 @@ export function useGenerateStream(
       if (input.title && input.title.trim()) fd.append("title", input.title.trim());
       if (input.persona && input.persona.trim()) fd.append("persona", input.persona.trim());
       fd.append("fidelityMode", input.fidelityMode ? "true" : "false");
+      if (input.contract) {
+        try {
+          fd.append("contract", JSON.stringify(input.contract));
+        } catch {
+          // Defensive — non-serializable input slips silently rather than
+          // breaking the form submit.
+        }
+      }
 
       const res = await fetch("/api/generate", {
         method: "POST",

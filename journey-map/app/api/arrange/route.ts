@@ -23,8 +23,14 @@ const POSITIONING_META_KEYS = new Set([
 ]);
 
 /** True when the given config's layout+renderingPlan legitimately use
- *  positioned cards. Only then are meta.x/y/etc. respected by the renderer. */
+ *  positioned cards. Only then are meta.x/y/etc. respected by the renderer.
+ *
+ *  Clustered-variant boards (config.cellGroups present) are rendered as a
+ *  regular grid with CellGroupChrome painting behind the cells — the grid
+ *  owns geometry, NOT the agent. So clustered boards never allow positioning
+ *  meta even if layout happens to be "freeform" (legacy configs). */
 function layoutAllowsPositioning(config: FrameworkConfig): boolean {
+  if (config.cellGroups && config.cellGroups.length > 0) return false;
   if (config.layout === "freeform") return true;
   const orientation = config.renderingPlan?.cardOrientation;
   return (

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { renderChromeShape, type ChromeSpec } from "./chromes";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // EditableGrid — interactive cell grid with live-Claude agent actions.
@@ -85,6 +86,20 @@ type Props = {
    *  The user's typed text is passed to the same `/api/preview/reason` pipeline
    *  as the `task` field, so every prompt runs the framework-aware agent. */
   promptMode?: boolean;
+  /** Background SVG chrome rendered at gridW × gridH behind the cell
+   *  substrate. Takes the place of FrameworkGrid's old layout-specific
+   *  ChromeLayer banner — anchored to the actual cells, not a fixed-height
+   *  banner above. */
+  chrome?: ChromeSpec;
+  /** Labeled cell-group regions overlaid on the substrate. Each region
+   *  highlights a set of cells with a soft background + a small label,
+   *  matching the clustered-variant chrome from the synth pipeline. */
+  regions?: Array<{
+    id: string;
+    label: string;
+    cells: Array<{ row: number; col: number }>;
+    chromeStyle?: "box" | "region" | "radial-petal" | "none";
+  }>;
 };
 
 type ExecutorResultPayload = {
@@ -120,6 +135,8 @@ export function EditableGrid({
   frameworkName,
   instanceContext,
   promptMode = false,
+  chrome,
+  regions,
 }: Props) {
   const [promptText, setPromptText] = useState("");
   // Default `allowNewEdges` per structure: only ON for shapes where connectors
@@ -936,6 +953,78 @@ export function EditableGrid({
             className="relative"
             style={{ width: gridW, height: gridH }}
           >
+            {/* Background chrome (coordinate-cross / venn / kano-curve / etc.).
+                Sized to the actual cell substrate so its center sits at the
+                geometric middle of the grid — not floating in a fixed-height
+                banner above. Drawn first so cells layer on top. */}
+            {chrome && (
+              <svg
+                aria-hidden
+                className="absolute pointer-events-none"
+                style={{ left: 0, top: 0, width: gridW, height: gridH }}
+                width={gridW}
+                height={gridH}
+                viewBox={`0 0 ${gridW} ${gridH}`}
+                preserveAspectRatio="none"
+              >
+                {renderChromeShape(chrome, gridW, gridH)}
+              </svg>
+            )}
+
+            {/* Cell-group regions — labeled rectangles behind cells. Used by
+                the clustered-variant boards (mind maps, post-mortems,
+                opportunity canvases, strategy boards). Same idea as the
+                cluster overlay below but driven by config.cellGroups, not
+                user-edited clusters. */}
+            {regions && regions.length > 0 && (
+              <div className="absolute inset-0 pointer-events-none">
+                {regions.map((region) => {
+                  if (region.cells.length === 0) return null;
+                  const minRow = Math.min(...region.cells.map((c) => c.row));
+                  const maxRow = Math.max(...region.cells.map((c) => c.row));
+                  const minCol = Math.min(...region.cells.map((c) => c.col));
+                  const maxCol = Math.max(...region.cells.map((c) => c.col));
+                  const padding = Math.round(8 * S);
+                  const left = minCol * (cellW + gap) - padding;
+                  const top = minRow * (cellH + gap) - padding;
+                  const width =
+                    (maxCol - minCol + 1) * cellW + (maxCol - minCol) * gap + padding * 2;
+                  const height =
+                    (maxRow - minRow + 1) * cellH + (maxRow - minRow) * gap + padding * 2;
+                  return (
+                    <div
+                      key={region.id}
+                      className="absolute rounded-xl ring-1"
+                      style={{
+                        left,
+                        top,
+                        width,
+                        height,
+                        borderRadius: Math.round(10 * S),
+                        background: "rgb(var(--accent) / 0.04)",
+                        boxShadow: "inset 0 0 0 1px rgb(var(--accent) / 0.18)",
+                      }}
+                    >
+                      {region.label && (
+                        <div
+                          className="absolute font-mono uppercase tracking-[0.14em] rounded-md bg-white px-1.5 py-0.5"
+                          style={{
+                            top: -Math.round(11 * S),
+                            left: Math.round(10 * S),
+                            fontSize: Math.max(9, 9.5 * S),
+                            color: "rgb(var(--accent))",
+                            boxShadow: "inset 0 0 0 1px rgb(var(--accent) / 0.35)",
+                          }}
+                        >
+                          {region.label}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
             {/* Empty grid slots (so user can see where cells land) */}
             <div
               className="absolute inset-0 grid"

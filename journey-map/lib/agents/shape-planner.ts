@@ -1,156 +1,160 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { getAgentModel, getAnthropic } from "@/lib/anthropic";
+import {
+  validateContract,
+  renderContractBlock,
+  type ShapeContract,
+} from "@/lib/frameworks/shape-contract";
 
 // ──────────────────────────────────────────────────────────────────────────────
-// shape-planner — forces per-subject layout variation. Runs between the
-// clarifier/interpreter and the synth agent. Takes a description and emits a
-// structured shape blueprint whose core constraint is SPECIFICITY: the shape
-// must emerge from THIS subject, not from the framework category's default.
+// shape-planner — the SINGLE upstream decision point for a board's shape.
 //
-// Without this, every "post-mortem" becomes a 6-column kanban, every
-// "competitive matrix" becomes a 2×2, every journey map becomes a swimlane
-// grid — regardless of what the actual subject demands. The planner is
-// explicitly told to reach for unusual shapes when the subject warrants
-// (timelines, five-whys cascades, funnel chromes, freeform region canvases).
+// Runs between the clarifier/interpreter and the synth agent. Takes a
+// description + optional source digest and emits a typed ShapeContract that
+// every downstream stage (synth, populate, render) must honor.
+//
+// Why it exists: without this, every "post-mortem" becomes a 6-column kanban,
+// every "competitive matrix" becomes a 2×2, every journey map becomes a
+// swimlane grid. And when the user has enumerated specific entities or
+// dimensions, lesser models paraphrase them into buckets of their own
+// invention. The contract closes those drift surfaces by making enumerated
+// content a CLOSED LIST and by typing variant/cellGroups explicitly.
+//
+// Critically: the variant enum is { axed | categorical | clustered } — there
+// is NO freeform. Mind maps, clustered canvases, opportunity maps, SVB-style
+// post-mortems — all become clustered grids (grid + CellGroupChrome). The
+// freeform absolute-positioning path is deprecated for AI-generated content.
 //
 // Opt-out: SHAPE_PLANNER=off.
 // ──────────────────────────────────────────────────────────────────────────────
 
-export type ShapePlan = {
-  layout: "matrix" | "grid" | "kanban" | "freeform";
-  /** Number of cols + their labels in order. Kanban typically 3-7, matrix
-   *  typically 2-5, grid 3-12, freeform 0 (positioning is by meta). */
-  cols: string[];
-  /** Number of rows + labels. Kanban should be a single row. Matrix 2-5.
-   *  Grid 2-8. Freeform 0. */
-  rows: string[];
-  /** Optional chrome kind. Available in the FrameworkConfig.chrome system:
-   *  double-diamond, venn, kano-curve, funnel, concentric-rings, none. Use
-   *  when the visual shape genuinely reinforces the subject. */
-  chrome?: string;
-  /** Named thematic regions — REQUIRED when layout === "freeform" and the
-   *  board is not a pure mind map. Each region becomes a labeled rectangle
-   *  shape card in the renderer that wraps its member content cards. This
-   *  is how we get cluster chrome (visible groupings with labels) without
-   *  falling back to axis-based layouts. */
-  regions?: string[];
-  /** Optional layout pattern for the regions on the freeform canvas, e.g.
-   *  "2x3 grid", "center + 4 petals", "horizontal strip". Guides the
-   *  populate agent's region positioning. */
-  regionLayout?: string;
-  /** Why this specific shape fits THIS subject — not just the category.
-   *  Must reference concrete features of the subject (entities named in
-   *  the prompt, temporal structure, causal relationships, etc.). */
-  rationale: string;
-  /** What generic shape this subject would have defaulted to, and why this
-   *  plan is different. Forces the planner to actually compare. */
-  vsDefault: string;
-  /** Suggested card density heuristic — the synth agent reads this for
-   *  populate. e.g. "dense: 6-8 per col", "sparse: 2-3 per cell", "headline
-   *  cards only". */
-  density?: string;
-  /** Optional structural notes. E.g. "cascading five-whys: each row is a
-   *  deeper why, cards become the reasoning chain" or "timeline: cols are
-   *  dates in strict order, rows are actors". */
-  structuralNotes?: string;
-};
+export type { ShapeContract } from "@/lib/frameworks/shape-contract";
+export { renderContractBlock } from "@/lib/frameworks/shape-contract";
 
 export function shapePlannerEnabled(): boolean {
   return process.env.SHAPE_PLANNER !== "off";
 }
 
+export type ExistingBoardForPlanner = {
+  title?: string;
+  cols?: string[];
+  rows?: string[];
+  /** Top-level cards keyed by their (col label, row label) cell. Order
+   *  reflects the original board so the planner can preserve narrative if
+   *  the new shape keeps a temporal axis. */
+  cards: Array<{ col: string; row: string; text: string }>;
+};
+
 export async function runShapePlanner(args: {
   description: string;
   sourcesSummary?: string;
-}): Promise<ShapePlan | null> {
+  /** When the user is reshaping an existing board, pass its content so the
+   *  planner treats every existing entity as enumerated (closed list) on
+   *  the new shape. Without this the planner invents fresh names to match
+   *  whatever new axes it picks. */
+  existingBoard?: ExistingBoardForPlanner;
+}): Promise<ShapeContract | null> {
   if (!shapePlannerEnabled()) return null;
   const client = getAnthropic();
-
-  const system = SYSTEM;
-  const user = buildUser(args);
 
   try {
     const response = await client.messages.create({
       model: process.env.SHAPE_PLANNER_MODEL || getAgentModel(),
-      max_tokens: 1200,
-      temperature: 0.45,
-      system,
-      tools: [SHAPE_PLAN_TOOL as unknown as Anthropic.Messages.Tool],
-      tool_choice: { type: "tool", name: "propose_shape" },
-      messages: [{ role: "user", content: user }],
+      max_tokens: 1600,
+      temperature: 0.4,
+      system: SYSTEM,
+      tools: [PROPOSE_CONTRACT_TOOL as unknown as Anthropic.Messages.Tool],
+      tool_choice: { type: "tool", name: "propose_contract" },
+      messages: [{ role: "user", content: buildUser(args) }],
     });
     const block = response.content.find((b) => b.type === "tool_use");
-    if (!block || block.type !== "tool_use") return null;
-    return coerce(block.input as Partial<ShapePlan>);
+    if (!block || block.type !== "tool_use") {
+      console.warn("[shape-planner] no tool_use in response");
+      return null;
+    }
+    const validation = validateContract(block.input);
+    if (!validation.ok) {
+      console.warn(`[shape-planner] planner produced an invalid contract: ${validation.reason}`);
+      return null;
+    }
+    return validation.contract;
   } catch (err) {
     console.warn("[shape-planner] failed — proceeding without a plan:", err);
     return null;
   }
 }
 
-export function renderShapePlanBlock(plan: ShapePlan): string {
-  const lines: string[] = ["# Shape plan (authoritative)"];
-  lines.push(`- layout: ${plan.layout}`);
-  if (plan.cols.length > 0) lines.push(`- cols (${plan.cols.length}): ${plan.cols.join(" | ")}`);
-  if (plan.rows.length > 0) lines.push(`- rows (${plan.rows.length}): ${plan.rows.join(" | ")}`);
-  if (plan.regions && plan.regions.length > 0) {
-    lines.push(`- regions (${plan.regions.length}): ${plan.regions.join(" | ")}`);
-    lines.push(
-      `  (each region MUST be emitted as a rectangle shape card with the region label as its text, positioned to wrap its member content cards. This is the cluster chrome.)`
-    );
-  }
-  if (plan.regionLayout) lines.push(`- region layout: ${plan.regionLayout}`);
-  if (plan.chrome && plan.chrome !== "none") lines.push(`- chrome: ${plan.chrome}`);
-  if (plan.density) lines.push(`- density: ${plan.density}`);
-  if (plan.structuralNotes) lines.push(`- structural notes: ${plan.structuralNotes}`);
-  lines.push(`- rationale: ${plan.rationale}`);
-  lines.push(`- why not the default: ${plan.vsDefault}`);
-  return lines.join("\n");
+/** Back-compat alias — previous callers imported renderShapePlanBlock. The
+ *  behaviour is now identical to renderContractBlock (it serialises a
+ *  ShapeContract the same way). Retained so diffs are local to Phase 1. */
+export function renderShapePlanBlock(contract: ShapeContract): string {
+  return renderContractBlock(contract);
 }
 
-// ── Internals ────────────────────────────────────────────────────────────────
+// ── System prompt ─────────────────────────────────────────────────────────────
 
-const SYSTEM = `You are a shape planner. A user wants to build a framework board about a specific subject. Your job: propose the SHAPE (layout + dimensions + optional chrome) that tells THIS subject's story best.
+const SYSTEM = `You are a shape planner. A user wants to build a framework board about a specific subject. Your job: emit ONE opinionated ShapeContract that tells THIS subject's story best.
 
-The board renderer has four layouts:
-- matrix: 2 axes (both meaningful). Good for tradeoff spaces, 2×2s, competitive spaces with clear x/y.
-- grid: cols × rows, both meaningful and usually semantically different (time × actor, stage × aspect). Good for journey maps, service blueprints, process maps.
-- kanban: 1 row, N cols. Cards fall into columns by category. Good for card sorts, JTBD, Now/Next/Later.
-- freeform: no grid. Cards positioned by (x,y). Good for loose spatial narratives, mind maps, canvases with thematic regions.
+The board renderer is a single structural grid. It has three variants driven by YOUR choice:
 
-Optional decorative chrome (renders behind cols): "double-diamond", "venn", "kano-curve", "funnel", "concentric-rings", or "none".
+- **axed**: both cols and rows carry semantic meaning. Use for competitive grids (competitors × dimensions), journey maps (stages × lanes), service blueprints, RACI matrices, timelines-with-actors. Matrix chromes (2×2 quadrants) are a subset — axed with small symmetric dimensions.
+- **categorical**: one meaningful axis (cols are categories) and a single implicit row. Use for card sorts, JTBD canvases, affinity themes, kanban-style bucketing, Ikigai/Venn, Double Diamond, Kano, concentric rings. Chrome kinds like "venn", "double-diamond", "kano-curve", "funnel", "concentric-rings" compose with this variant.
+- **clustered**: cells grouped into named regions. Use for mind maps, post-mortem canvases, opportunity maps, strategy boards, stakeholder landscapes — anything where content relates BY GROUP more than by axis. You MUST populate cellGroups: a list of { id, label, cells } pairings. Axes are still present (they scaffold the grid) but colLabelsShown / rowLabelsShown typically false.
+
+**There is no freeform variant.** Mind maps and clustered canvases all use "clustered" — the grid owns geometry; your cell-group labels become chrome.
 
 ### Your hard rules
 
-1. **SPECIFICITY OVER CATEGORY**. Do NOT pick the default shape for the framework category.
-   - "Post-mortem" → do NOT default to a 5-column kanban (What happened / Why / Impact / Actions / Lessons). Ask: what does THIS post-mortem demand? A post-mortem about a time-bound crisis (SVB collapse, outage, launch) is a TIMELINE. A post-mortem about a failed product decision is a FIVE-WHYS cascade (grid with each row deeper). A post-mortem about team dynamics is a 2×2. An incident post-mortem at a tech company with structured sections might be a freeform with named regions.
-   - "Competitive matrix" → usually a matrix, but NOT always 2×2. A CLM vendor comparison across 8 dimensions is a grid (vendors × dimensions), not a 2×2.
-   - "Journey map" → NOT always 6-swimlane × 7-stages. A super short product onboarding is maybe 3 swimlanes × 4 stages. A multi-actor B2B sale might be 8 stages with 2 actor bands.
-   - "Strategy board" → rarely a simple tabular grid. Often a freeform with named thematic regions (Users, Pains, Bets, Metrics, Risks, Capital) positioned spatially.
+0. **HONOR ENUMERATED CONTENT — NON-NEGOTIABLE.**
+   If the user has listed specific entities (e.g. "Anthropic, OpenAI, Google DeepMind, Meta, Mistral, xAI") or dimensions (e.g. "reasoning, code, multimodal, context length, safety, enterprise distribution, pricing, ecosystem"):
+   - Set \`enumerated.entities\` / \`enumerated.dimensions\` to those exact items.
+   - Use them verbatim as rows or cols. DO NOT invent additional entries.
+   - If the user listed N items on one axis and M on the other, the answer is an axed grid with exactly N cols × M rows (or N rows × M cols). Do not collapse N items into M buckets.
 
-2. **REACH FOR VARIATION**. If two or more shapes could reasonably work, pick the LESS common one when it tells the story better. Bias toward interesting over safe.
+1. **SPECIFICITY OVER CATEGORY.** Do NOT pick the default shape for the framework category. A "post-mortem of SVB" is a timeline or five-whys or a clustered canvas — not a default 5-col kanban. A "competitive matrix across 8 dimensions" is an axed grid of exact size, not a 2×2.
 
-3. **DIMENSIONS MUST MATCH CONTENT**. Don't pick a 6-col kanban because 6 feels right. Count what the subject actually has: if there are 4 meaningful phases, use 4 cols. If the subject has 11 vendors and 7 criteria, use a grid that size.
+2. **REACH FOR VARIATION.** If two variants could reasonably work, pick the LESS common one when it tells the story better.
 
-4. **ROW / COL LABELS MUST BE SPECIFIC**. Not "Category 1, Category 2" — name them based on the subject. For SVB, not "Event A, Event B" but "Mar 8: bond-sale announcement", "Mar 9: $42B run", etc.
+3. **DIMENSIONS MUST MATCH CONTENT.** Count what the subject has. 4 phases → 4 cols. 11 vendors × 7 criteria → 11 × 7 axed grid.
 
-5. **STATE WHY NOT THE DEFAULT**. In \`vsDefault\`, name the shape this subject would have gotten by default and explain why your proposal is better. This is a self-check against lazy shape picks.
+4. **LABELS MUST BE SPECIFIC.** Not "Category 1, Category 2" — name them from the subject. For an SVB timeline: "Mar 8: bond-sale announcement", "Mar 9: $42B run", etc.
 
-### When to reach for each layout
+5. **STATE WHY NOT THE DEFAULT.** In \`vsDefault\`, name the shape this subject would default to, and explain why your proposal is better.
 
-- **freeform**: the subject has thematic regions that don't map to clean axes (exec planning boards, opportunity landscapes, post-mortems of complex incidents with heterogeneous evidence). Use freeform when cards relate BY GROUP more than by row/col position. **CRITICAL**: when you pick freeform, you MUST also populate \`regions\`: one named region per thematic cluster (e.g., for an SVB post-mortem: ["Root Causes", "Warning Signs", "Founder Decisions", "Regulatory Response", "Market Changes", "Lessons for 2026"]). Without named regions, the board becomes a chaotic card soup. Also specify \`regionLayout\` (e.g., "2x3 grid", "3x2 grid", "central + 5 petals", "horizontal strip of 4") so the populate step knows how to lay regions out on the canvas.
-- **timeline (grid with time cols)**: the subject is EVENT-DRIVEN. SVB collapse. Product launch retrospective. Political campaign post-mortem. Use col labels = dates or phases; row labels = actors, categories, or evidence types.
-- **five-whys cascade (grid, rows = depth)**: the subject is a CAUSAL CHAIN. "Why did X happen?" → each row is a deeper why. Use col labels = branches; row labels = why-1, why-2, why-3.
-- **matrix (2×2 or larger)**: two axes genuinely define the space. Don't pick matrix unless the axes are actually meaningful independent variables.
-- **kanban with chrome**: the subject wants a recognized visual identity (Double Diamond, Ikigai, Kano). Include chrome kind.
+### Hard rules for common framework families
 
-### How to use the sources (if a digest is provided)
+- **Mind map / concept map / idea map / brain dump**: ALWAYS \`variant: "clustered"\` with \`cellGroupLayoutHint: "radial"\`. Each branch is one cellGroup. Put the root ("My Career", "Q2 Priorities", etc.) as one cellGroup over a central cell. The other groups fan out. NEVER emit a grid with "CENTER / INNER RING / OUTER RING" cols — that's an empty table, not a mind map.
+- **Ikigai / Venn / overlap**: \`variant: "categorical"\` with \`chrome: "venn"\`.
+- **Double Diamond / design process**: \`variant: "categorical"\` with \`chrome: "double-diamond"\` and 4 cols (Discover / Define / Develop / Deliver).
+- **Kano model / priority curve / funnel**: \`variant: "categorical"\` with chrome \`"kano-curve"\` or \`"funnel"\`.
+- **Concentric rings / onion model / stakeholder map**: \`variant: "categorical"\` with \`chrome: "concentric-rings"\`. Cols = the rings (inner → outer).
+- **Timeline (event-driven)**: \`variant: "axed"\`. Col labels = dates or phases; row labels = actors / categories / evidence types.
+- **Five-whys cascade (causal chain)**: \`variant: "axed"\`. Col = branch; rows = why-1, why-2, why-3, depth.
+- **Competitive matrix with enumerated competitors + enumerated dimensions**: \`variant: "axed"\`. Cols = exactly the enumerated dimensions. Rows = exactly the enumerated competitors. (Or vice versa, depending on which list is longer.)
+- **2×2 matrix / quadrant**: \`variant: "axed"\` with 2 fixed cols and 2 fixed rows. ONLY when the user has NOT enumerated the axis contents and has genuinely asked for two tradeoff dimensions.
+- **Post-mortem with thematic regions (SVB-style)**: \`variant: "clustered"\`. cellGroups = the named regions (Root Causes, Warning Signs, Founder Decisions, Regulatory Response, Lessons, etc.). cellGroupLayoutHint = "3x2 grid" or similar. Each region covers one or two adjacent cells.
+- **Strategy canvas / opportunity map / exec planning board**: \`variant: "clustered"\`. cellGroups = the named sections (Users, Pains, Bets, Metrics, Risks, Capital).
 
-If a CSV's columns/rows are meaningful, USE THEM as your col/row labels (not generic labels). If a document is named, anchor the subject to it. If a transcript mentions named people, consider actor-based rows.
+### Confidence
 
-Call propose_shape with one concrete, opinionated plan.`;
+Include \`confidence\` per field. Mark:
+- \`subject: "low"\` if the prompt doesn't name what the board is ABOUT (e.g. just "post-mortem" with no event).
+- \`variant: "low"\` if two variants are equally defensible and the user hasn't hinted.
+- \`cellGroups: "low"\` (clustered only) if you had to guess the region names without strong evidence.
+- \`density: "low"\` when the content volume is genuinely unknown.
+Default to "high" when you're certain. Clarifier only asks about low-confidence fields.
 
-function buildUser(args: { description: string; sourcesSummary?: string }): string {
+### How to use sources (digest, optional)
+
+If a CSV's columns/rows are meaningful, use them as col/row labels (not generic). If a document names people, consider actor-based rows.
+
+Call \`propose_contract\` with one concrete, opinionated contract. Never respond with free text.`;
+
+function buildUser(args: {
+  description: string;
+  sourcesSummary?: string;
+  existingBoard?: ExistingBoardForPlanner;
+}): string {
   const parts: string[] = [];
   parts.push(`## Description`);
   parts.push(args.description.trim());
@@ -158,107 +162,174 @@ function buildUser(args: { description: string; sourcesSummary?: string }): stri
     parts.push(``);
     parts.push(args.sourcesSummary.trim());
   }
+  if (args.existingBoard) {
+    const eb = args.existingBoard;
+    parts.push(``);
+    parts.push(`## Existing board (the user is RESHAPING; preserve every entity verbatim)`);
+    if (eb.title) parts.push(`Title: ${eb.title}`);
+    if (eb.cols && eb.cols.length > 0) parts.push(`Original cols: ${eb.cols.join(" | ")}`);
+    if (eb.rows && eb.rows.length > 0) parts.push(`Original rows: ${eb.rows.join(" | ")}`);
+    if (eb.cards.length > 0) {
+      parts.push(`Cards (${eb.cards.length}):`);
+      for (const c of eb.cards) {
+        parts.push(`  - [${c.col} / ${c.row}] ${c.text}`);
+      }
+    }
+    parts.push(``);
+    parts.push(
+      `RULES for reshape:`
+    );
+    parts.push(
+      `1. Every named entity from the existing cards MUST appear on the new shape. Do NOT invent replacement entities to fit a new layout. Set \`enumerated.entities\` to the actual entity list (the original rows / column entities — competitors / labs / actors / products).`
+    );
+    parts.push(
+      `2. Every original observation should still have a home on the new shape. Set \`density.target\` and \`density.max\` HIGH enough that existing cards can be redistributed without truncation. With ${eb.cards.length} existing cards and a typical reshape, target ≈ ceil(${eb.cards.length} / cells) cards per cell; max ≈ 1.5× that. Don't pin density to 2–3 just because the new shape is small — you're preserving content, not building from scratch.`
+    );
+    parts.push(
+      `3. If the user named NEW axes (e.g., speed × reasoning), think of the original rows as the entities being scored against those axes. Cards may extend the original text with axis-relevant detail, but the ENTITY (lab name, competitor name, etc.) must lead the card.`
+    );
+  }
   parts.push(``);
-  parts.push(`Propose a shape. Be specific. Reach for the less-common shape when it tells the story better. Call propose_shape.`);
+  parts.push(`Emit one ShapeContract via propose_contract. Be specific. Honor enumerated content verbatim. Reach for the less-common variant when it tells the story better.`);
   return parts.join("\n");
 }
 
-function coerce(raw: Partial<ShapePlan>): ShapePlan | null {
-  if (!raw || typeof raw !== "object") return null;
-  const layout = raw.layout;
-  if (layout !== "matrix" && layout !== "grid" && layout !== "kanban" && layout !== "freeform") {
-    return null;
-  }
-  const cols = Array.isArray(raw.cols)
-    ? raw.cols.filter((c): c is string => typeof c === "string" && c.trim().length > 0).map((c) => c.trim())
-    : [];
-  const rows = Array.isArray(raw.rows)
-    ? raw.rows.filter((r): r is string => typeof r === "string" && r.trim().length > 0).map((r) => r.trim())
-    : [];
-  const rationale = typeof raw.rationale === "string" ? raw.rationale.trim() : "";
-  const vsDefault = typeof raw.vsDefault === "string" ? raw.vsDefault.trim() : "";
-  if (!rationale || !vsDefault) return null;
-  const chrome = typeof raw.chrome === "string" ? raw.chrome.trim() : undefined;
-  const density = typeof raw.density === "string" ? raw.density.trim() : undefined;
-  const structuralNotes = typeof raw.structuralNotes === "string" ? raw.structuralNotes.trim() : undefined;
-  const regions = Array.isArray(raw.regions)
-    ? raw.regions.filter((r): r is string => typeof r === "string" && r.trim().length > 0).map((r) => r.trim())
-    : undefined;
-  const regionLayout = typeof raw.regionLayout === "string" ? raw.regionLayout.trim() : undefined;
-  return {
-    layout,
-    cols,
-    rows,
-    chrome: chrome && chrome !== "none" ? chrome : undefined,
-    rationale,
-    vsDefault,
-    density,
-    structuralNotes,
-    regions,
-    regionLayout,
-  };
-}
+// ── Tool schema ───────────────────────────────────────────────────────────────
 
-const SHAPE_PLAN_TOOL = {
-  name: "propose_shape",
+const PROPOSE_CONTRACT_TOOL = {
+  name: "propose_contract",
   description:
-    "Propose one opinionated shape that fits THIS specific subject. Must reject the category default and justify why.",
+    "Emit one opinionated ShapeContract that fits THIS specific subject. Must reject the category default and justify why. Must honor enumerated content verbatim.",
   input_schema: {
     type: "object",
-    required: ["layout", "cols", "rows", "rationale", "vsDefault"],
+    required: ["subject", "variant", "axes", "density", "enumerated", "rationale", "vsDefault"],
     additionalProperties: false,
     properties: {
-      layout: {
+      subject: { type: "string", description: "What the board is about — the named event, product, company, or concept." },
+      audience: { type: "string", description: "Who reads this board (founders, VCs, operators, engineers, etc.). Leave empty if unspecified." },
+      variant: {
         type: "string",
-        enum: ["matrix", "grid", "kanban", "freeform"],
-      },
-      cols: {
-        type: "array",
-        items: { type: "string" },
+        enum: ["axed", "categorical", "clustered"],
         description:
-          "Col labels in order. Must be subject-specific (not 'Category 1, 2'). Use [] only for pure freeform with no columnar structure.",
-      },
-      rows: {
-        type: "array",
-        items: { type: "string" },
-        description:
-          "Row labels in order. Must be subject-specific. Use [] for kanban (single implicit row) or pure freeform.",
+          "axed = both axes semantic (grid / matrix). categorical = cols are categories (kanban; single implicit row). clustered = named cell groups (mind map, post-mortem canvas, opportunity map).",
       },
       chrome: {
         type: "string",
-        description:
-          "Optional visual chrome: double-diamond, venn, kano-curve, funnel, concentric-rings, or 'none'. Only use when the subject genuinely calls for this visual identity.",
+        enum: ["double-diamond", "venn", "kano-curve", "funnel", "concentric-rings", "coordinate-cross", "none"],
+        description: "Decorative chrome behind the grid. Defaults to 'none'.",
+      },
+      axes: {
+        type: "object",
+        required: ["cols", "rows"],
+        additionalProperties: false,
+        properties: {
+          cols: {
+            type: "array",
+            minItems: 1,
+            items: {
+              type: "object",
+              required: ["label"],
+              additionalProperties: false,
+              properties: {
+                id: { type: "string", description: "optional; server assigns c1, c2 … if omitted." },
+                label: { type: "string" },
+                kind: { type: "string" },
+              },
+            },
+          },
+          rows: {
+            type: "array",
+            minItems: 1,
+            items: {
+              type: "object",
+              required: ["label"],
+              additionalProperties: false,
+              properties: {
+                id: { type: "string" },
+                label: { type: "string" },
+                kind: { type: "string" },
+              },
+            },
+          },
+          colLabelsShown: { type: "boolean", description: "false for clustered variant when col labels are scaffolding, not semantics." },
+          rowLabelsShown: { type: "boolean" },
+        },
+      },
+      cellGroups: {
+        type: "array",
+        description: "REQUIRED when variant is 'clustered'. Named regions over cells.",
+        items: {
+          type: "object",
+          required: ["label", "cells"],
+          additionalProperties: false,
+          properties: {
+            id: { type: "string" },
+            label: { type: "string" },
+            cells: {
+              type: "array",
+              minItems: 1,
+              items: {
+                type: "object",
+                required: ["colId", "rowId"],
+                additionalProperties: false,
+                properties: {
+                  colId: { type: "string" },
+                  rowId: { type: "string" },
+                },
+              },
+            },
+            chromeStyle: { type: "string", enum: ["box", "region", "radial-petal", "none"] },
+          },
+        },
+      },
+      cellGroupLayoutHint: {
+        type: "string",
+        description: "How cell groups lay out visually: '3x2', 'radial', 'central+petals', 'horizontal-strip', etc.",
+      },
+      density: {
+        type: "object",
+        required: ["min", "target", "max"],
+        additionalProperties: false,
+        properties: {
+          min: { type: "number", description: "Minimum cards per cell (or per group for clustered)." },
+          target: { type: "number" },
+          max: { type: "number" },
+        },
+      },
+      enumerated: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          entities: {
+            type: "array",
+            items: { type: "string" },
+            description: "Exact named entities the user listed (competitors, labs, products, actors). Closed list.",
+          },
+          dimensions: {
+            type: "array",
+            items: { type: "string" },
+            description: "Exact named dimensions the user listed (capabilities, criteria, axes). Closed list.",
+          },
+        },
       },
       rationale: {
         type: "string",
-        description:
-          "Why this shape fits THIS subject. Must reference concrete features of the subject — named entities, temporal structure, causal relationships.",
+        description: "Why THIS shape fits THIS subject. Must reference concrete features of the subject.",
       },
       vsDefault: {
         type: "string",
-        description:
-          "Name the shape this subject would default to, and why your proposal is better. Forces a self-check against lazy category-based picks.",
+        description: "Name the shape this subject would default to, and why your proposal is better.",
       },
-      density: {
-        type: "string",
-        description:
-          "Card density hint: 'sparse: 2-3 per cell', 'medium: 4-6 per col', 'dense: 6-8 per col', 'headline cards only', etc.",
-      },
-      structuralNotes: {
-        type: "string",
-        description:
-          "How rows/cols should be READ. E.g. 'cols are dates in chronological order; rows are actor bands' or 'rows are depth levels of why?'",
-      },
-      regions: {
-        type: "array",
-        items: { type: "string" },
-        description:
-          "REQUIRED when layout is 'freeform'. Named thematic clusters — e.g. for an SVB post-mortem: ['Root Causes', 'Warning Signs', 'Founder Decisions', 'Regulatory Response', 'Market Changes', 'Lessons for 2026']. Each becomes a labeled rectangle shape card that wraps its content cards. Without regions, freeform boards become chaotic.",
-      },
-      regionLayout: {
-        type: "string",
-        description:
-          "How to arrange the regions on the canvas. E.g. '3x2 grid' (cols × rows), 'central + 5 petals', 'horizontal strip of 4', 'L-shape with anchor on left'. Only set when layout is freeform.",
+      confidence: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          subject: { type: "string", enum: ["high", "medium", "low"] },
+          variant: { type: "string", enum: ["high", "medium", "low"] },
+          axes: { type: "string", enum: ["high", "medium", "low"] },
+          cellGroups: { type: "string", enum: ["high", "medium", "low"] },
+          density: { type: "string", enum: ["high", "medium", "low"] },
+        },
       },
     },
   },

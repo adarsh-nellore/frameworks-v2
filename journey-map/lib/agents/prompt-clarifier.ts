@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { getAnthropic, getThemeNormalizeModel } from "@/lib/anthropic";
 import type { SourceDigest } from "./source-digest";
+import type { ShapeContract } from "@/lib/frameworks/shape-contract";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // prompt-clarifier — turn-based conversational pre-step that asks open-ended
@@ -57,9 +58,19 @@ export type ClarifierTurnInput = {
    *  exists so it can ask targeted questions like "which regions should I
    *  preserve?" or "what's the axis you want?" instead of generic ones. */
   boardSnapshot?: string;
+  /** Draft ShapeContract from the shape planner. When present, the clarifier
+   *  knows exactly what's already been decided and asks ONE question tied to
+   *  a low-confidence field (if any). This is what stops the clarifier from
+   *  regressing into execution-detail micromanaging. */
+  draftContract?: ShapeContract | null;
 };
 
-const MAX_TURNS = 4;
+/** How many clarifier model calls we'll make before force-readying server-side.
+ *  Turn 0 (transcript.length === 0) always consults the model. Turns at or
+ *  beyond this number return ready without consulting. The conversational
+ *  budget is intentionally tight: one focused follow-up beats three meandering
+ *  ones for getting the user back to a concrete board. */
+const MAX_TURNS = 1;
 
 export function getClarifierModel(): string {
   return process.env.CLARIFIER_MODEL || getThemeNormalizeModel();
@@ -126,30 +137,60 @@ export async function runClarifierTurn(input: ClarifierTurnInput): Promise<Clari
 // ── System prompt ────────────────────────────────────────────────────────────
 
 function buildSystemPrompt(turnIndex: number): string {
-  const turnsRemaining = MAX_TURNS - turnIndex;
-  return `You are a clarifier that sharpens rough framework-board requests into precise briefs a downstream synth agent can act on. One turn at a time.
+  const isFirstTurn = turnIndex === 0;
+  return `You are a clarifier. The user is about to generate (or iterate on) a framework board. Your job: ask one sharp follow-up that materially shapes what gets built, then get out of the way.
 
-Your job each turn:
-- Read the user's prompt, the conversation transcript so far, and any source digest.
-- EITHER ask ONE open-ended question whose answer materially changes what gets rendered, OR declare ready with a structured constraints object.
-- Do not ask questions whose answers wouldn't change the output (cosmetic, stylistic, or already-stated).
+## Behavior by turn
 
-Hard rules:
-- Open-ended free-text answers are always allowed. Suggestions are optional quick-replies (2–4 max); never a forced multiple-choice.
-- Never invent subject detail. If the subject is missing, ASK; don't guess.
-- When sources are attached, ground questions in them — reference CSV column names verbatim, quote document titles, cite named entities from text previews. Never ask for information already spelled out in a source.
-- Declare ready as SOON as a first-rate synth agent would succeed with what's been gathered. Conservative > thorough. Don't ask three questions when one more would've been enough.
-- Turns remaining: ${turnsRemaining}. If this is the last turn, you MUST return ready.
+${isFirstTurn
+  ? `**Turn 0 — ask ONE question by default.** A good board needs more than a shape and a subject. The thing that's almost always missing from a one-line prompt is one of: who reads it, what they decide from it, what angle the user actually cares about, or which slice of an enormous topic to cover. Pick the single highest-leverage one and ask. Examples:
+- Prompt: "service blueprint for a telehealth urgent-care visit" → "Who's the primary reader — clinical ops, product, or compliance?" (each rebalances which swimlane gets depth)
+- Prompt: "competitive matrix of foundation model labs across 8 dimensions" → "Is this for an enterprise buyer making a procurement call, or for an investor sizing the field?"
+- Prompt: "post-mortem of the SVB collapse for founders" → "Is the angle 'lessons for treasury management' or 'how to read warning signs in your own bank'?"
+- Prompt: "mind map of my career" → "What's the decision this is supposed to inform — a job search, a year-end review, or a long-arc plan?"
 
-Framework primers — once the likely layout is clear, ask shape-specific questions:
-- matrix (two axes, e.g. 2×2, competitive matrices): ask which two properties become axes, which competitors/items populate cells, whether any are fixed.
-- grid (swimlanes × stages, e.g. journey maps, service blueprints, process maps): ask who the actor is, how many swimlanes and what kind (actions / touchpoints / emotions / pain points / backstage), and the stage scope.
-- kanban (columns of cards, e.g. card sort, affinity, JTBD, Now/Next/Later): ask what the columns represent, how many, and the item granularity.
-- freeform (mind map, concept map): ask what sits at the center and how branches are organized.
+The ONLY reason to skip the question and return ready immediately on turn 0 is if the user has already pinned audience + angle + scope explicitly in their prompt (rare). When in doubt, ask.
 
-Constraints shape (when you return ready): return the fields actually confirmed. Common keys: layout, subject, shape, swimlanes, axes, columns, rows, depth, entities, grounding, must_include. Free-text answers land verbatim.
+If a board snapshot is present (the user is iterating on an existing board), still ask one question when the iteration is ambiguous — e.g., "make this 2×2" → "Which two axes? (e.g., market scope × pricing strategy, or cost × differentiation)". If the iteration is unambiguous (e.g., "add 3 risks per row"), you may return ready.`
+  : `**Turn ${turnIndex} — bias toward ready.** The user has answered. Only ask another question if there's a SECOND ambiguity that's just as load-bearing as the first. Otherwise, return ready and roll up everything you've learned into constraints.`}
 
-Call clarifier_turn with exactly one mode: question OR ready.`;
+## Permitted question topics (intent, not execution)
+
+- Audience / reader / user.
+- Use case or decision the board supports.
+- Angle / framing of the subject.
+- Scope when the subject is huge ("the internet" → ask for the slice).
+- A genuine shape fork (two very different shapes both fit, and the answer changes what gets built — e.g., timeline vs five-whys for a post-mortem).
+- The subject if it's truly missing.
+
+## Forbidden topics (the synth + planner decide these)
+
+- Cell content style (rating vs descriptor — never).
+- Counts: cards, columns, rows, bands, density.
+- Specific col / row labels — the shape planner picks these.
+- Which chrome.
+- Connectors.
+- Any execution detail a good practitioner would just default.
+
+## Format rules
+
+- ONE question per turn. Short (under 15 words ideally). Plain language. No compound questions.
+- Suggestions are optional quick-replies (2–3 max). Always allow free text. Never force multiple choice.
+- Never invent subject detail. If missing, ask briefly.
+- ${isFirstTurn ? "This is your one and only chance to ask. After this turn the system finalizes regardless." : "Final turn — return ready now."}
+
+## Constraints shape (when you return ready)
+
+Return ONLY fields the user actually stated or plausibly confirmed. Common keys: subject, audience, scope, angle, use_case, must_include. Do not invent \`layout\`, \`columns\`, \`rows\`, \`bands\`, \`density\` — those belong to the shape planner. Flat string or string-array values only.
+
+## Tone of questions
+
+Phrase it like a sharp collaborator double-checking intent — not like a form. Examples of the bar:
+- ✓ "Who's the main audience — founders, operators, or investors?"
+- ✓ "Is this a timeline of the collapse, or a root-cause breakdown?"
+- ✗ "For each of the 8 capability dimensions, should each cell contain a single rating/score, a brief descriptor, or a short comparative statement?" (execution detail, too long)
+
+Call clarifier_turn with exactly one mode: question OR ready. On turn 0, ask unless the prompt already pins audience + angle + scope. After that, bias toward ready.`;
 }
 
 function buildUserMessage(input: ClarifierTurnInput): string {
@@ -157,6 +198,11 @@ function buildUserMessage(input: ClarifierTurnInput): string {
   if (input.boardSnapshot && input.boardSnapshot.trim().length > 0) {
     parts.push(`## Current board (the user is iterating on this — preserve or restructure as their prompt implies)`);
     parts.push(input.boardSnapshot.trim());
+    parts.push(``);
+  }
+  if (input.draftContract) {
+    parts.push(`## Draft shape (from the shape planner — already decided; don't re-ask about these)`);
+    parts.push(renderDraftForClarifier(input.draftContract));
     parts.push(``);
   }
   parts.push(`## User ${input.boardSnapshot ? "instruction" : "prompt"}`);
@@ -174,8 +220,47 @@ function buildUserMessage(input: ClarifierTurnInput): string {
     }
   }
   parts.push(``);
-  parts.push(`Call clarifier_turn now.`);
+  parts.push(
+    `Call clarifier_turn now. On turn 0, default to asking ONE follow-up about audience / angle / scope / use case unless the prompt already pins those — the planner has the shape covered, but it can't infer who this is for or what slice the user actually cares about.`
+  );
   return parts.join("\n");
+}
+
+/** Render a compact view of the planner's draft contract + its confidence
+ *  flags so the clarifier can see what's already decided and where the
+ *  actual gaps are. Kept short to preserve the clarifier's terse style. */
+function renderDraftForClarifier(contract: ShapeContract): string {
+  const lines: string[] = [];
+  lines.push(`- subject: "${contract.subject}"  [confidence: ${contract.confidence?.subject ?? "?"}]`);
+  lines.push(`- variant: ${contract.variant}  [confidence: ${contract.confidence?.variant ?? "?"}]`);
+  if (contract.audience) lines.push(`- audience: ${contract.audience}`);
+  lines.push(
+    `- cols (${contract.axes.cols.length}): ${contract.axes.cols.map((c) => c.label).join(", ")}  [axes confidence: ${contract.confidence?.axes ?? "?"}]`
+  );
+  lines.push(
+    `- rows (${contract.axes.rows.length}): ${contract.axes.rows.map((r) => r.label).join(", ")}`
+  );
+  if (contract.cellGroups && contract.cellGroups.length > 0) {
+    lines.push(
+      `- cellGroups (${contract.cellGroups.length}): ${contract.cellGroups.map((g) => g.label).join(" | ")}  [confidence: ${contract.confidence?.cellGroups ?? "?"}]`
+    );
+  }
+  if (contract.chrome) lines.push(`- chrome: ${contract.chrome}`);
+  lines.push(
+    `- density: ${contract.density.min}–${contract.density.max} per cell  [confidence: ${contract.confidence?.density ?? "?"}]`
+  );
+  if (contract.enumerated.entities && contract.enumerated.entities.length > 0) {
+    lines.push(`- enumerated entities: ${contract.enumerated.entities.join(", ")}`);
+  }
+  if (contract.enumerated.dimensions && contract.enumerated.dimensions.length > 0) {
+    lines.push(`- enumerated dimensions: ${contract.enumerated.dimensions.join(", ")}`);
+  }
+  lines.push(`- rationale: ${contract.rationale}`);
+  lines.push(``);
+  lines.push(
+    "The planner has the SHAPE handled. Use this draft to AVOID asking about col/row labels, variant, or chrome — those are settled. Your question (if any) should be about audience, angle, scope, or use case — the things the planner can't infer alone."
+  );
+  return lines.join("\n");
 }
 
 // ── Validation / coercion ────────────────────────────────────────────────────

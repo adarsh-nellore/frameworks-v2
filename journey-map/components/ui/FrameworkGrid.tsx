@@ -36,6 +36,11 @@ import { SelectionToolbar } from "./grid/SelectionToolbar";
 import { FreeformLayout } from "./grid/FreeformLayout";
 import { ChromeLayer } from "./grid/ChromeLayer";
 import { PresentedCard, inferPresentMode } from "./grid/PresentedCard";
+import {
+  resolveCellGroup,
+  CellGroupLabelChip,
+  type CellGroupInfo,
+} from "./grid/CellGroupChrome";
 import { ConnectorLayer, type ConnectorDraft } from "./grid/ConnectorLayer";
 import { ConnectorUIContext, type ConnectorUI } from "./grid/connector-ui-context";
 import type { ConnectorAnchor } from "@/lib/frameworks/universal/types";
@@ -66,6 +71,10 @@ type Props = {
   selection: unknown;
   onSelectionChange: (next: unknown) => void;
   createdAt?: number;
+  /** Optional — called when the user renames a cell group inline via the
+   *  CellGroupLabelChip. Parent owns the FrameworkConfig state and decides
+   *  whether to persist it. When undefined, chip labels are read-only. */
+  onCellGroupRename?: (groupId: string, nextLabel: string) => void;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -80,6 +89,7 @@ export function FrameworkGrid({
   selection,
   onSelectionChange,
   createdAt,
+  onCellGroupRename,
 }: Props) {
   const sel = (selection as UniversalSelection | null) ?? null;
   const agentBusy = !!busy;
@@ -485,6 +495,7 @@ export function FrameworkGrid({
     onRowContextMenu: openRowMenuHandler,
     onSlotContextMenu: openSlotMenu,
     commitOps,
+    onCellGroupRename,
   };
 
   const selectedCount = sel?.type === "cards" ? sel.ids.length : 0;
@@ -628,6 +639,8 @@ type LayoutProps = {
   onRowContextMenu: (e: React.MouseEvent, rowId: string) => void;
   onSlotContextMenu: (e: React.MouseEvent, colId: string, rowId: string) => void;
   commitOps: (ops: Op[]) => void;
+  /** Optional — inline rename for clustered-variant cell groups. */
+  onCellGroupRename?: (groupId: string, nextLabel: string) => void;
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -638,6 +651,9 @@ function GridLayout(p: LayoutProps) {
   const { map, config, cardsByPos, agentBusy } = p;
   const colIds = map.cols.map((c) => c.id);
   const rowIds = map.rows.map((r) => r.id);
+  // Clustered variant: resolve per-cell group membership once so the cell
+  // slots below can paint ring + tint chrome without recomputing per render.
+  const hasCellGroups = (config.cellGroups?.length ?? 0) > 0;
 
   return (
     <div className="flex flex-col">
@@ -730,6 +746,9 @@ function GridLayout(p: LayoutProps) {
                 </SortableHandle>
                 {map.cols.map((col) => {
                   const cards = cardsByPos[`${col.id}:${row.id}`] ?? [];
+                  const groupInfo = hasCellGroups
+                    ? resolveCellGroup(config, col.id, row.id, colIds, rowIds)
+                    : null;
                   return (
                     <CellSlotGrid
                       key={col.id}
@@ -753,6 +772,8 @@ function GridLayout(p: LayoutProps) {
                       onSlotContextMenu={p.onSlotContextMenu}
                       metaFields={config.cardMetaFields}
                       config={config}
+                      groupInfo={groupInfo}
+                      onCellGroupRename={p.onCellGroupRename}
                     />
                   );
                 })}
@@ -802,6 +823,8 @@ function CellSlotGrid({
   onSlotContextMenu,
   metaFields,
   config,
+  groupInfo,
+  onCellGroupRename,
 }: {
   colId: string;
   rowId: string;
@@ -823,6 +846,10 @@ function CellSlotGrid({
   onSlotContextMenu: (e: React.MouseEvent, colId: string, rowId: string) => void;
   metaFields?: CardMetaField[];
   config?: FrameworkConfig;
+  /** Cell-group membership for the clustered variant (undefined = no group). */
+  groupInfo?: CellGroupInfo | null;
+  /** Fires when the user renames this cell's group label inline. */
+  onCellGroupRename?: (groupId: string, nextLabel: string) => void;
 }) {
   const drop = useDroppable({
     id: `slot:${colId}:${rowId}`,
@@ -837,16 +864,33 @@ function CellSlotGrid({
   const stacked = cards.filter((c) => inferPresentMode(c, config) === "stacked");
   const hasPositioned = positioned.length > 0;
 
+  const groupClasses = groupInfo
+    ? `${groupInfo.ringClass} ${groupInfo.bgClass}`
+    : "";
+
   return (
     <div
       ref={drop.setNodeRef}
       style={{ width: CARD_W, minHeight: hasPositioned ? 80 : undefined }}
       className={[
         "shrink-0 flex flex-col gap-2 p-1 rounded-xl",
-        hasPositioned ? "relative overflow-visible" : "",
+        (hasPositioned || groupInfo) ? "relative overflow-visible" : "",
+        groupClasses,
+        groupInfo?.isAnchor ? "pt-7" : "", // make room for the group label chip
         drop.isOver ? "bg-ink-primary/[0.04] ring-1 ring-ink-primary/30 ring-inset" : "",
       ].join(" ")}
+      data-cell-group={groupInfo?.group.id ?? undefined}
     >
+      {groupInfo?.isAnchor && (
+        <CellGroupLabelChip
+          info={groupInfo}
+          onLabelChange={
+            onCellGroupRename
+              ? (next) => onCellGroupRename(groupInfo.group.id, next)
+              : undefined
+          }
+        />
+      )}
       {cards.length === 0 ? (
         <EmptySlot
           droppableId={`slot:${colId}:${rowId}`}

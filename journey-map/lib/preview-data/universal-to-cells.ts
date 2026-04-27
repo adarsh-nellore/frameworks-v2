@@ -1,17 +1,27 @@
 import type { UniversalMap } from "@/lib/frameworks/universal/types";
 import type { FrameworkConfig } from "@/lib/frameworks/universal/config";
 import type { EditableCell } from "@/components/ui/grid/EditableGrid";
+import type { ChromeSpec } from "@/components/ui/grid/chromes";
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Flatten a UniversalMap (the real product's output from /api/generate) into
-// the one-card-per-slot shape EditableGrid expects. Strategy:
-//   - Every column in the map becomes a column in the grid.
-//   - For each map row, we reserve a "row block" of H rows where H is the max
-//     number of cards found at any (col, row) within that row. Cards at a
-//     given (col, row) stack top-to-bottom inside that block.
+// universal-to-cells — flattens any UniversalMap onto the EditableGrid cell
+// substrate. Strategy:
+//
+//   - Every column in the map becomes a column in the substrate.
+//   - For each map row, reserve a "row block" of H rows where H is the max
+//     number of cards in any (col, row) of that row. Cards at a given
+//     (col, row) stack top-to-bottom inside the block.
 //   - Row labels live on the first row of each block (blank elsewhere).
-//   - Sub-items (parentCardId) are flattened right after their parent.
-//   - Rich-text markup (**bold**, ==highlight==) is stripped.
+//   - Sub-items (parentCardId) flatten right after their parent.
+//   - cellGroups → labeled regions over the substrate so clustered canvases
+//     render as the same grid + a labeled overlay.
+//   - chrome → a typed ChromeSpec for the background SVG layer.
+//   - axis labels → x/y captions for the chrome (e.g. "Speed" / "Reasoning").
+//
+// EditableGrid is the single canvas all preview routes share. There is no
+// "should we flatten?" decision any more — multi-card cells, sub-items, and
+// connectors-disabled boards all sit on this substrate. The chrome layer
+// replaces the layout-specific MatrixLayout/KanbanLayout/etc. divergence.
 // ──────────────────────────────────────────────────────────────────────────────
 
 export type StructureHint =
@@ -21,50 +31,52 @@ export type StructureHint =
   | "matrix"
   | "timeline";
 
+export type FlattenedRegion = {
+  id: string;
+  label: string;
+  /** Cells in (row, col) substrate coordinates, post-flattening. */
+  cells: Array<{ row: number; col: number }>;
+  chromeStyle?: "box" | "region" | "radial-petal" | "none";
+};
+
+export type FlattenedAxisLabels = {
+  x?: string;
+  y?: string;
+};
+
 export type FlattenedBoard = {
   cells: EditableCell[];
   rows: number;
   cols: number;
   rowLabels?: string[];
   colLabels?: string[];
+  /** Background chrome behind the cell grid (coordinate-cross / venn / etc.). */
+  chrome?: ChromeSpec;
+  /** Labeled cell-group regions overlaid on the substrate. */
+  regions?: FlattenedRegion[];
+  /** Optional axis captions for chrome (typically x/y labels). */
+  axisLabels?: FlattenedAxisLabels;
 };
 
 const MAX_ROWS = 30;
 const MAX_COLS = 30;
 
-/** Decide whether a generated UniversalMap can be rendered faithfully on the
- *  single-card-per-slot EditableGrid. Data-driven, not name-based:
- *   - fails if ANY (colId,rowId) holds more than 1 top-level card
- *   - fails if any card has a parentCardId (sub-items can't be represented)
- *   - fails if the config's layout is grid with meaningful rowLabels — grid
- *     layouts encode multi-aspect swimlanes that typically carry multiple
- *     items per (col,row) even if the seed happens to be sparse
- *   - otherwise: safe to flatten (matrix, kanban, freeform with single-
- *     entry cells, or any grid where each slot is already a single card)
+/**
+ * Always flatten — EditableGrid is the universal substrate. Kept exported
+ * so existing call-sites that gate on it stay compatible (they all get
+ * `true` now). Will be removed once those call-sites are inlined.
  */
 export function shouldFlatten(
-  map: UniversalMap,
-  config?: FrameworkConfig | null
+  _map: UniversalMap,
+  _config?: FrameworkConfig | null
 ): boolean {
-  const perSlot = new Map<string, number>();
-  for (const c of map.cards) {
-    if (c.parentCardId) return false;
-    const key = `${c.colId}:${c.rowId}`;
-    perSlot.set(key, (perSlot.get(key) ?? 0) + 1);
-  }
-  for (const count of perSlot.values()) if (count > 1) return false;
-  // Grid layout with >1 named row is a swimlane-style framework (journey map,
-  // service blueprint, process map) — always hand those to the real renderer,
-  // even when the seed is coincidentally single-card-per-slot. Flattening them
-  // strips row semantics that the user expects to see.
-  if (config?.layout === "grid") {
-    const namedRows = map.rows.filter((r) => r.label && r.label.trim().length > 0).length;
-    if (namedRows > 1) return false;
-  }
   return true;
 }
 
-export function universalMapToCells(map: UniversalMap): FlattenedBoard {
+export function universalMapToCells(
+  map: UniversalMap,
+  config?: FrameworkConfig | null
+): FlattenedBoard {
   const colsCount = Math.max(1, Math.min(MAX_COLS, map.cols.length || 1));
   const rowsCount = Math.max(1, map.rows.length || 1);
 
@@ -115,7 +127,8 @@ export function universalMapToCells(map: UniversalMap): FlattenedBoard {
     maxPerRow[ri] = Math.max(maxPerRow[ri], list.length);
   }
 
-  // Block-start row for each original row idx.
+  // Block-start row for each original row idx. Track each block's span so
+  // cellGroup regions can be expanded across stacked rows.
   const blockStart: number[] = [];
   let acc = 0;
   for (let i = 0; i < rowsCount; i++) {
@@ -152,13 +165,122 @@ export function universalMapToCells(map: UniversalMap): FlattenedBoard {
     }
   }
 
+  // ── Chrome ────────────────────────────────────────────────────────────────
+  const chrome = resolveChrome(map, config);
+
+  // ── Regions (cellGroups) ──────────────────────────────────────────────────
+  const regions = buildRegions(config, colIndexById, rowIndexById, blockStart, maxPerRow, totalRows, colsCount);
+
+  // ── Axis labels ───────────────────────────────────────────────────────────
+  const axisLabels: FlattenedAxisLabels = {};
+  const xAxisLabel =
+    typeof map.meta?.xAxisLabel === "string" ? map.meta.xAxisLabel : undefined;
+  const yAxisLabel =
+    typeof map.meta?.yAxisLabel === "string" ? map.meta.yAxisLabel : undefined;
+  if (xAxisLabel) axisLabels.x = xAxisLabel;
+  if (yAxisLabel) axisLabels.y = yAxisLabel;
+
   return {
     cells,
     rows: totalRows,
     cols: colsCount,
     rowLabels: rowLabels.some((l) => l.length > 0) ? rowLabels : undefined,
     colLabels: colLabels.some((l) => l.length > 0) ? colLabels : undefined,
+    chrome,
+    regions: regions && regions.length > 0 ? regions : undefined,
+    axisLabels: axisLabels.x || axisLabels.y ? axisLabels : undefined,
   };
+}
+
+function resolveChrome(
+  map: UniversalMap,
+  config?: FrameworkConfig | null
+): ChromeSpec | undefined {
+  // map.meta override beats config.chrome (agent can rewrite chrome via setMapMeta).
+  const overrideKind =
+    typeof map.meta?.chromeKind === "string" ? map.meta.chromeKind : undefined;
+  if (overrideKind === "none") return undefined;
+  const cfg = config?.chrome;
+  const kind = overrideKind || cfg?.kind;
+  if (!kind) return undefined;
+
+  const x = typeof map.meta?.xAxisLabel === "string" ? map.meta.xAxisLabel : undefined;
+  const y = typeof map.meta?.yAxisLabel === "string" ? map.meta.yAxisLabel : undefined;
+  const left =
+    (typeof map.meta?.chromeLeftLabel === "string"
+      ? map.meta.chromeLeftLabel
+      : undefined) ??
+    (cfg?.kind === "double-diamond" ? cfg.leftLabel : undefined);
+  const right =
+    (typeof map.meta?.chromeRightLabel === "string"
+      ? map.meta.chromeRightLabel
+      : undefined) ??
+    (cfg?.kind === "double-diamond" ? cfg.rightLabel : undefined);
+  const circles =
+    (typeof map.meta?.chromeCircles === "string"
+      ? map.meta.chromeCircles.split("|").map((s) => s.trim()).filter(Boolean)
+      : undefined) ??
+    (cfg?.kind === "venn" ? cfg.circles : undefined);
+
+  switch (kind) {
+    case "coordinate-cross":
+      return { kind: "coordinate-cross", xLabel: x, yLabel: y };
+    case "double-diamond":
+      return { kind: "double-diamond", leftLabel: left, rightLabel: right };
+    case "venn":
+      return { kind: "venn", circles, colCount: map.cols.length };
+    case "kano-curve":
+      return { kind: "kano-curve" };
+    case "funnel":
+      return { kind: "funnel" };
+    case "concentric":
+    case "concentric-rings":
+      return { kind: "concentric" };
+    default:
+      return undefined;
+  }
+}
+
+function buildRegions(
+  config: FrameworkConfig | null | undefined,
+  colIndexById: Map<string, number>,
+  rowIndexById: Map<string, number>,
+  blockStart: number[],
+  maxPerRow: number[],
+  totalRows: number,
+  colsCount: number
+): FlattenedRegion[] | undefined {
+  const groups = config?.cellGroups;
+  if (!groups || groups.length === 0) return undefined;
+  const regions: FlattenedRegion[] = [];
+  for (const g of groups) {
+    const cellSet = new Set<string>();
+    const cells: Array<{ row: number; col: number }> = [];
+    for (const c of g.cells) {
+      const ri = rowIndexById.get(c.rowId);
+      const ci = colIndexById.get(c.colId);
+      if (ri === undefined || ci === undefined) continue;
+      const start = blockStart[ri];
+      const span = Math.max(1, maxPerRow[ri] ?? 1);
+      const colIdx = Math.min(colsCount - 1, ci);
+      for (let k = 0; k < span; k++) {
+        const row = start + k;
+        if (row >= totalRows) break;
+        const key = `${row}:${colIdx}`;
+        if (cellSet.has(key)) continue;
+        cellSet.add(key);
+        cells.push({ row, col: colIdx });
+      }
+    }
+    if (cells.length === 0) continue;
+    regions.push({
+      id: g.id,
+      label: g.label,
+      cells,
+      chromeStyle: g.chromeStyle,
+    });
+  }
+  return regions;
 }
 
 export function structureHintForConfig(config?: FrameworkConfig | null): StructureHint {

@@ -226,6 +226,11 @@ function currentStepLabel(progress: GenerateEvent | null, frameworkLabel: string
       return "Extracting research…";
     case "synthesizing":
       return `Structuring the ${fw}…`;
+    case "populating":
+      if (progress.total > 0) {
+        return `Filling cards (${progress.done}/${progress.total})…`;
+      }
+      return "Filling cards…";
     case "critiquing":
       return progress.fidelity_score !== undefined
         ? "Critique complete"

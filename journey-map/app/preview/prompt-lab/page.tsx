@@ -3,19 +3,15 @@
 import {
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
   type DragEvent as ReactDragEvent,
-  type PointerEvent as ReactPointerEvent,
 } from "react";
 import Link from "next/link";
-import { EditableGrid } from "@/components/ui/grid/EditableGrid";
 import { useGenerateStream } from "@/lib/hooks/use-generate-stream";
 import {
   universalMapToCells,
   structureHintForConfig,
-  shouldFlatten,
   type FlattenedBoard,
   type StructureHint,
 } from "@/lib/preview-data/universal-to-cells";
@@ -38,13 +34,10 @@ import { FrameworkGridStage } from "./framework-grid-stage";
 //      follow-ups. The agent can declare ready at any turn.
 //   3. Clarifier answers compose into a `# Constraints (user-confirmed)`
 //      block that's appended to the prompt before /api/generate runs.
-//   4. Generation streams; we route the result to EditableGrid (flat
-//      frameworks) or FrameworkGrid (richer grid-layout frameworks).
+//   4. Generation streams; the result renders through FrameworkGridStage,
+//      which mounts EditableGrid (the universal cell substrate) with the
+//      framework's chrome + cellGroup regions overlaid.
 // ──────────────────────────────────────────────────────────────────────────────
-
-const MIN_SCALE = 0.2;
-const MAX_SCALE = 2.5;
-const DEFAULT_SCALE = 0.55;
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 50 * 1024 * 1024;
@@ -75,7 +68,6 @@ type BoardState = {
   isDynamic: boolean;
   flat: FlattenedBoard;
   structureHint: StructureHint;
-  canFlatten: boolean;
 };
 
 type TranscriptPair = { question: string; answer: string };
@@ -96,8 +88,22 @@ type ConstraintsValue = string | string[] | undefined;
 type Constraints = Record<string, ConstraintsValue>;
 
 type ClarifierResponse =
-  | { ok: true; ready: true; constraints: Constraints; sourceDigest: SourceDigestClient }
-  | { ok: true; ready: false; question: ClarifierQuestion; sourceDigest: SourceDigestClient };
+  | {
+      ok: true;
+      ready: true;
+      constraints: Constraints;
+      sourceDigest: SourceDigestClient;
+      /** Typed shape contract from the planner. Threaded into /api/generate
+       *  so the planner doesn't run a second time. */
+      contract?: unknown;
+    }
+  | {
+      ok: true;
+      ready: false;
+      question: ClarifierQuestion;
+      sourceDigest: SourceDigestClient;
+      contract?: unknown;
+    };
 
 export default function PromptLabPage() {
   const [prompt, setPrompt] = useState("");
@@ -112,9 +118,20 @@ export default function PromptLabPage() {
   const [answerDraft, setAnswerDraft] = useState("");
   const [clarifying, setClarifying] = useState(false);
   const [sourceDigest, setSourceDigest] = useState<SourceDigestClient | null>(null);
+  // Latest typed shape contract from the clarify route. Threaded into
+  // /api/generate when the user finalizes so the planner runs once across
+  // the clarify+generate pair instead of twice.
+  const [prefetchedContract, setPrefetchedContract] = useState<unknown>(null);
 
   const [phase, setPhase] = useState<string | null>(null);
   const [board, setBoard] = useState<BoardState | null>(null);
+  /** Generation produced a valid config but an empty or near-empty map —
+   *  populate step had nothing to emit or silently failed. We surface this as
+   *  an error with a Retry button instead of dumping the user onto a blank
+   *  grid that looks broken. Threshold is conservative (< 4 cards) to catch
+   *  the zero-card and almost-zero-card cases without flagging legitimately
+   *  sparse frameworks. */
+  const [emptyResult, setEmptyResult] = useState<{ cardCount: number } | null>(null);
   const configRef = useRef<FrameworkConfig | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const dropZoneRef = useRef<HTMLDivElement | null>(null);
@@ -135,6 +152,16 @@ export default function PromptLabPage() {
       setPhase(phaseLabel(event));
     },
     onSuccess: (map, summary) => {
+      // Empty-result guard: if the populate step produced nothing meaningful,
+      // don't route the user onto a blank grid that looks broken. Show a real
+      // error with a retry path instead.
+      const topLevelCount = map.cards.filter((c) => !c.parentCardId).length;
+      if (topLevelCount < 4) {
+        setEmptyResult({ cardCount: topLevelCount });
+        setBoard(null);
+        setPhase(null);
+        return;
+      }
       const cfg = configRef.current;
       let resolvedConfig = cfg;
       let isDynamic = false;
@@ -156,13 +183,11 @@ export default function PromptLabPage() {
           isDynamic: false,
           flat,
           structureHint: "brainstorm-dump",
-          canFlatten: true,
         });
         setPhase(null);
         return;
       }
-      const flat = universalMapToCells(map);
-      const canFlatten = shouldFlatten(map, resolvedConfig);
+      const flat = universalMapToCells(map, resolvedConfig);
       setBoard({
         map,
         summary,
@@ -170,7 +195,6 @@ export default function PromptLabPage() {
         isDynamic,
         flat,
         structureHint: structureHintForConfig(resolvedConfig),
-        canFlatten,
       });
       setPhase(null);
     },
@@ -264,6 +288,7 @@ export default function PromptLabPage() {
     setActiveQuestion(null);
     setAnswerDraft("");
     setSourceDigest(null);
+    setEmptyResult(null);
     setClarifying(true);
 
     try {
@@ -276,18 +301,20 @@ export default function PromptLabPage() {
       const data = (await res.json()) as ClarifierResponse | { ok: false; error: string };
       if (!("ok" in data) || !data.ok) {
         // Fail soft — skip clarifier, go straight to generate with whatever we have.
-        await finalizeGenerate({});
+        await finalizeGenerate({}, null);
         return;
       }
       setSourceDigest(data.sourceDigest);
+      const contract = data.contract ?? null;
+      setPrefetchedContract(contract);
       if (data.ready) {
-        await finalizeGenerate(data.constraints);
+        await finalizeGenerate(data.constraints, contract);
         return;
       }
       setActiveQuestion(data.question);
     } catch {
       // Network/transport failure — skip clarifier and generate anyway.
-      await finalizeGenerate({});
+      await finalizeGenerate({}, null);
     }
   }
 
@@ -316,16 +343,18 @@ export default function PromptLabPage() {
       });
       const data = (await res.json()) as ClarifierResponse | { ok: false; error: string };
       if (!("ok" in data) || !data.ok) {
-        await finalizeGenerate({});
+        await finalizeGenerate({}, prefetchedContract);
         return;
       }
+      const updatedContract = data.contract ?? prefetchedContract;
+      setPrefetchedContract(updatedContract);
       if (data.ready) {
-        await finalizeGenerate(data.constraints);
+        await finalizeGenerate(data.constraints, updatedContract);
         return;
       }
       setActiveQuestion(data.question);
     } catch {
-      await finalizeGenerate({});
+      await finalizeGenerate({}, prefetchedContract);
     }
   }
 
@@ -337,10 +366,10 @@ export default function PromptLabPage() {
     if (transcript.length > 0) {
       constraints.notes = transcript.map((p) => `${p.question} → ${p.answer}`);
     }
-    await finalizeGenerate(constraints);
+    await finalizeGenerate(constraints, prefetchedContract);
   }
 
-  async function finalizeGenerate(constraints: Constraints) {
+  async function finalizeGenerate(constraints: Constraints, contract: unknown) {
     setActiveQuestion(null);
     setAnswerDraft("");
     const constraintsBlock = renderConstraintsBlockClient(constraints);
@@ -356,6 +385,7 @@ export default function PromptLabPage() {
       files,
       urls,
       fidelityMode: false,
+      contract: contract ?? undefined,
     });
   }
 
@@ -376,15 +406,13 @@ export default function PromptLabPage() {
     setActiveQuestion(null);
     setAnswerDraft("");
     setSourceDigest(null);
+    setPrefetchedContract(null);
     configRef.current = null;
   }
 
   // ── Render ───────────────────────────────────────────────────────────────────
 
   if (board) {
-    if (board.canFlatten) {
-      return <BoardStage board={board} onReset={handleReset} />;
-    }
     return (
       <FrameworkGridStage
         map={board.map}
@@ -392,12 +420,13 @@ export default function PromptLabPage() {
         isDynamic={board.isDynamic}
         summary={board.summary}
         onReset={handleReset}
-        onRegenerate={async (userPrompt) => {
+        onRegenerate={async (userPrompt, contract) => {
           // The arrange agent refused a layout-change request. Build a fresh
           // generate prompt by stitching together (a) the current board's
           // subject/title and (b) the user's reshape instruction, then fire
-          // the full synth pipeline. Shape planner will produce the correct
-          // new layout + regions for this subject.
+          // the full synth pipeline. When the sidebar threaded its clarifier
+          // contract through, we reuse it here so the planner doesn't run
+          // again. Otherwise the synth route plans from scratch.
           const subject =
             board.map.title?.trim() ||
             board.config?.label ||
@@ -414,12 +443,14 @@ export default function PromptLabPage() {
           setTranscript([]);
           setActiveQuestion(null);
           setAnswerDraft("");
+          if (contract !== undefined) setPrefetchedContract(contract);
           await submit({
             frameworkId: "auto",
             text: newPrompt,
             files,
             urls,
             fidelityMode: false,
+            contract: contract ?? undefined,
           });
         }}
       />
@@ -442,6 +473,49 @@ export default function PromptLabPage() {
           CSVs, documents, or URLs. A clarifier agent may ask a few follow-ups to
           sharpen your intent before generating.
         </p>
+
+        {emptyResult && (
+          <div className="mt-6 rounded-lg ring-1 ring-amber-200 bg-amber-50 px-4 py-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-amber-700">
+                  Populate failed
+                </div>
+                <div className="text-[13px] font-medium text-amber-900 mt-0.5">
+                  The agent returned {emptyResult.cardCount === 0 ? "no cards" : `only ${emptyResult.cardCount} card${emptyResult.cardCount === 1 ? "" : "s"}`} — not enough to render a usable board.
+                </div>
+                <p className="text-[11.5px] text-amber-800/90 mt-1.5 leading-[1.5]">
+                  This usually means the shape picked didn&apos;t fit the prompt (common for vague inputs like &quot;mind map&quot; that should go through a freeform / radial layout). Try again, tweak the prompt, or add a file for grounding.
+                </p>
+              </div>
+              <button
+                onClick={() => setEmptyResult(null)}
+                className="text-[11px] text-amber-700 hover:text-amber-900"
+                aria-label="Dismiss"
+              >
+                ×
+              </button>
+            </div>
+            <div className="mt-2.5 flex items-center gap-2">
+              <button
+                onClick={() => {
+                  setEmptyResult(null);
+                  void handleInitialSubmit();
+                }}
+                disabled={busy}
+                className="text-[11.5px] font-medium bg-amber-600 text-white rounded-md px-3 py-1.5 hover:bg-amber-700 disabled:opacity-50"
+              >
+                Retry with same prompt
+              </button>
+              <button
+                onClick={() => setEmptyResult(null)}
+                className="text-[11.5px] text-amber-700 bg-white ring-1 ring-amber-200 rounded-md px-3 py-1.5 hover:bg-amber-100"
+              >
+                Edit prompt
+              </button>
+            </div>
+          </div>
+        )}
 
         {!inClarifier && (
           <form onSubmit={handleInitialSubmit} className="mt-8">
@@ -849,7 +923,13 @@ function phaseLabel(e: GenerateEvent<UniversalMap>): string {
     case "extracting":
       return `Extracting atoms (${e.current}/${e.total}) — ${e.sourceLabel}…`;
     case "synthesizing":
-      return "Synthesizing framework + populating cards…";
+      return "Synthesizing framework structure…";
+    case "populating":
+      if (e.total > 0) {
+        const tail = e.lastLabel ? ` — finished "${e.lastLabel}"` : "";
+        return `Populating cards (${e.done}/${e.total})${tail}…`;
+      }
+      return "Populating cards…";
     case "critiquing":
       return `Critiquing${typeof e.fidelity_score === "number" ? ` (score ${e.fidelity_score})` : ""}…`;
     case "revising":
@@ -863,160 +943,6 @@ function phaseLabel(e: GenerateEvent<UniversalMap>): string {
   }
 }
 
-// ── Generated-board stage (EditableGrid path) ────────────────────────────────
-
-function BoardStage({ board, onReset }: { board: BoardState; onReset: () => void }) {
-  const [scale, setScale] = useState(DEFAULT_SCALE);
-  const [tx, setTx] = useState(40);
-  const [ty, setTy] = useState(40);
-  const stageRef = useRef<HTMLDivElement | null>(null);
-  const dragState = useRef<{ startX: number; startY: number; startTx: number; startTy: number } | null>(null);
-
-  useEffect(() => {
-    const el = stageRef.current;
-    if (!el) return;
-    function onWheel(e: WheelEvent) {
-      if (e.ctrlKey || e.metaKey) {
-        e.preventDefault();
-        const rect = el!.getBoundingClientRect();
-        const ox = e.clientX - rect.left;
-        const oy = e.clientY - rect.top;
-        const delta = -e.deltaY * 0.0015;
-        setScale((prev) => {
-          const next = Math.min(MAX_SCALE, Math.max(MIN_SCALE, prev * (1 + delta)));
-          const ratio = next / prev;
-          setTx((ptx) => ox - ratio * (ox - ptx));
-          setTy((pty) => oy - ratio * (oy - pty));
-          return next;
-        });
-      } else {
-        e.preventDefault();
-        setTx((v) => v - e.deltaX);
-        setTy((v) => v - e.deltaY);
-      }
-    }
-    el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
-  }, []);
-
-  function onPointerDown(e: ReactPointerEvent) {
-    if (e.button !== 0) return;
-    const target = e.target as HTMLElement | null;
-    if (target?.closest?.("[data-eg-interactive]")) return;
-    dragState.current = { startX: e.clientX, startY: e.clientY, startTx: tx, startTy: ty };
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-  }
-  function onPointerMove(e: ReactPointerEvent) {
-    const s = dragState.current;
-    if (!s) return;
-    setTx(s.startTx + (e.clientX - s.startX));
-    setTy(s.startTy + (e.clientY - s.startY));
-  }
-  function onPointerUp(e: ReactPointerEvent) {
-    dragState.current = null;
-    try {
-      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
-    } catch {}
-  }
-
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      const tag = (e.target as HTMLElement | null)?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA") return;
-      if (e.key === "0") {
-        setScale(DEFAULT_SCALE);
-        setTx(40);
-        setTy(40);
-      } else if (e.key === "=" || e.key === "+") {
-        setScale((s) => Math.min(MAX_SCALE, s * 1.15));
-      } else if (e.key === "-" || e.key === "_") {
-        setScale((s) => Math.max(MIN_SCALE, s / 1.15));
-      }
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-
-  const frameworkName = board.config?.label ?? "custom framework";
-  const instanceContext = useMemo(
-    () =>
-      board.summary?.trim() ||
-      board.map.title?.trim() ||
-      "Board generated from free-form prompt",
-    [board.summary, board.map.title]
-  );
-
-  return (
-    <main className="fixed inset-0 bg-surface overflow-hidden select-none">
-      <div
-        className="absolute top-4 left-4 z-20 bg-white/90 backdrop-blur rounded-lg ring-1 ring-border-soft px-4 py-3 max-w-md"
-        data-eg-interactive
-      >
-        <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-muted">
-          Preview · prompt lab · {board.flat.rows} × {board.flat.cols}
-        </div>
-        <h1 className="text-base font-semibold text-ink-primary mt-0.5">
-          {board.map.title || frameworkName}
-        </h1>
-        <p className="text-[11px] text-ink-muted mt-1">
-          {board.flat.cells.length} cells · structure:{" "}
-          <span className="font-mono">{board.structureHint}</span>. Custom prompts in the
-          sidebar run the framework-aware reasoning agent. ⌘/Ctrl+scroll to zoom · 0
-          resets.
-        </p>
-        <button
-          onClick={onReset}
-          className="mt-2 text-[10.5px] text-ink-muted hover:text-ink-secondary underline underline-offset-2"
-        >
-          ← Start over with a new prompt
-        </button>
-      </div>
-
-      <div
-        className="absolute top-4 right-4 z-20 bg-white/90 backdrop-blur rounded-md ring-1 ring-border-soft px-2 py-1"
-        data-eg-interactive
-      >
-        <span className="text-[11px] font-mono tabular-nums text-ink-secondary">
-          {Math.round(scale * 100)}%
-        </span>
-      </div>
-
-      <div
-        ref={stageRef}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
-        className="absolute inset-0 cursor-grab active:cursor-grabbing"
-        style={{ touchAction: "none" }}
-      >
-        <div
-          className="absolute top-0 left-0 origin-top-left"
-          style={{ transform: `translate(${tx}px, ${ty}px) scale(${scale})` }}
-        >
-          <div className="p-8" data-eg-interactive>
-            <EditableGrid
-              initialCells={board.flat.cells}
-              initialConfig={{
-                cellW: 150,
-                cellH: 70,
-                gap: 16,
-                cols: board.flat.cols,
-                rows: board.flat.rows,
-              }}
-              rowLabels={board.flat.rowLabels}
-              colLabels={board.flat.colLabels}
-              structureHint={board.structureHint}
-              frameworkName={frameworkName}
-              instanceContext={instanceContext}
-              promptMode
-            />
-          </div>
-        </div>
-      </div>
-    </main>
-  );
-}
 
 function MiniSpinner() {
   return (

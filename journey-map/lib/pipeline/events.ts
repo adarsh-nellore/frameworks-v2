@@ -10,6 +10,7 @@ export type GeneratePhase =
   | "subject_id"
   | "extracting"
   | "synthesizing"
+  | "populating"
   | "critiquing"
   | "revising"
   | "result"
@@ -30,6 +31,15 @@ export type GenerateEvent<TMap = unknown> =
       sourceLabel: string;
     }
   | { phase: "synthesizing" }
+  | {
+      phase: "populating";
+      /** How many parallel scope workers have finished so far. */
+      done: number;
+      /** Total scope workers in flight. */
+      total: number;
+      /** Latest scope's label so the UI can show what was just filled. */
+      lastLabel?: string;
+    }
   | { phase: "critiquing"; fidelity_score?: number }
   | { phase: "revising"; reason: string }
   | {

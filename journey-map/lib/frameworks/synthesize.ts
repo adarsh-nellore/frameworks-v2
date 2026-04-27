@@ -9,6 +9,16 @@ import {
 import { buildDescribeSystemPrompt } from "@/lib/frameworks/custom/prompt";
 import { applyOps } from "@/lib/frameworks/universal";
 import { buildSourceContentBlocks } from "@/lib/pipeline/source-content";
+import {
+  diffContract,
+  renderContractBlock,
+  type ShapeContract,
+} from "@/lib/frameworks/shape-contract";
+import {
+  canParallelPopulate,
+  runParallelPopulate,
+  type PopulateScope,
+} from "@/lib/frameworks/populate-parallel";
 import type { FrameworkConfig } from "@/lib/frameworks/universal/config";
 import type { UniversalMap } from "@/lib/frameworks/universal/types";
 import type { IngestedSource } from "@/lib/ingestion";
@@ -32,6 +42,17 @@ export type SynthesizeInput = {
   description: string;
   sources: IngestedSource[];
   existingIds: string[];
+  /** Optional typed contract from the shape planner. When present, the
+   *  description already carries `renderContractBlock(contract)`; the
+   *  contract is used here only for post-hoc validation (Phase 5 retry
+   *  diff). Synth prompts read the contract from the description text. */
+  contract?: ShapeContract;
+  /** Optional progress hooks for the parallel populate stage — callers
+   *  (e.g. /api/generate's stream) can surface per-scope progress. Fired
+   *  only on the parallel path; the legacy single-call path emits no
+   *  intermediate signals. */
+  onScopeStart?: (scope: PopulateScope, total: number) => void;
+  onScopeDone?: (scope: PopulateScope, opsCount: number) => void;
 };
 
 export type SynthesizeResult = {
@@ -45,7 +66,7 @@ export type SynthesizeResult = {
 export async function synthesizeFramework(
   input: SynthesizeInput
 ): Promise<SynthesizeResult> {
-  const { description, sources, existingIds } = input;
+  const { description, sources, existingIds, contract } = input;
   const warnings: string[] = [];
 
   // ── 1. Synthesize the FrameworkConfig via propose_framework tool ─────────
@@ -56,7 +77,26 @@ export async function synthesizeFramework(
   if (!v.ok) {
     throw new Error(`Agent produced an invalid config: ${v.reason}`);
   }
-  const config = v.config;
+  let config = v.config;
+
+  // Stamp cellGroups from the contract onto the config. The synth agent
+  // never emits cellGroups (it's not in the tool schema); the renderer reads
+  // them to draw CellGroupChrome behind the grouped cells. Skip when the
+  // contract has no groups or the variant isn't clustered.
+  if (contract && contract.variant === "clustered" && contract.cellGroups && contract.cellGroups.length > 0) {
+    config = {
+      ...config,
+      cellGroups: contract.cellGroups.map((g) => ({
+        id: g.id,
+        label: g.label,
+        cells: g.cells.map((cell) => ({ colId: cell.colId, rowId: cell.rowId })),
+        ...(g.chromeStyle ? { chromeStyle: g.chromeStyle } : {}),
+      })),
+      ...(contract.cellGroupLayoutHint
+        ? { cellGroupLayoutHint: contract.cellGroupLayoutHint }
+        : {}),
+    };
+  }
 
   // Dev-time visibility — useful for diagnosing process/flow generations that
   // come back without arrows, or matrix layouts without expected chrome.
@@ -73,38 +113,149 @@ export async function synthesizeFramework(
   let populatedMap = config.seed;
   let populationSummary: string | undefined;
   let opsCount = 0;
+  let populateOk = false;
+  let populateError: string | null = null;
 
-  const populateInstruction = populateInstructionFor(config, sources.length > 0);
-  const populateResult = await executeArrange({
-    map: config.seed,
+  const populateInstruction = populateInstructionFor(
     config,
-    instruction: populateInstruction,
-    sources: sources.length > 0 ? sources : undefined,
-  });
+    sources.length > 0,
+    contract
+  );
 
-  if (populateResult.ok) {
-    const applied = applyOps(config.seed, populateResult.ops);
-    if (applied.ok) {
-      populatedMap = applied.map;
-      populationSummary = populateResult.summary;
-      opsCount = populateResult.ops.length;
-      const connectorOps = populateResult.ops.filter(
-        (o) => (o as { op?: string }).op === "addConnector"
-      ).length;
-      console.log(
-        `[synthesize] populate ok — ${populateResult.ops.length} ops (${connectorOps} addConnector)`
-      );
+  // Parallel populate path — split by scope (row / col / cell-group) and run
+  // a small Haiku worker per scope concurrently. Disabled when connectors
+  // are required (cross-scope graph) or when there's only one scope. We
+  // also fall back to sequential whenever any non-text source is attached
+  // (PDF / image / file) because workers don't currently receive source
+  // content blocks — the single-call path needs them in scope to ground
+  // cards. Text-only sources (paste of the prompt itself) are fine; their
+  // content is already baked into the populate instruction.
+  const hasMediaSources = sources.some((s) => s.kind === "pdf" || s.kind === "image");
+  const useParallel = canParallelPopulate(config, contract) && !hasMediaSources;
+  if (useParallel) {
+    const t0 = Date.now();
+    const parallel = await runParallelPopulate({
+      config,
+      baseInstruction: populateInstruction,
+      contract,
+      onScopeStart: input.onScopeStart,
+      onScopeDone: input.onScopeDone,
+    });
+    if (parallel.ok) {
+      const applied = applyOps(config.seed, parallel.ops);
+      if (applied.ok) {
+        populatedMap = applied.map;
+        populationSummary = parallel.perScopeSummaries.join(" · ");
+        opsCount = parallel.ops.length;
+        populateOk = true;
+        console.log(
+          `[synthesize] parallel populate ok — ${parallel.ops.length} ops across ${parallel.perScopeSummaries.length} scopes (${parallel.failedScopes} failed) in ${Date.now() - t0}ms`
+        );
+      } else {
+        populateError = `Parallel ops couldn't apply (${applied.reason})`;
+        console.warn(
+          `[synthesize] parallel applyOps failed at index ${applied.failedAtIndex}: ${applied.reason} — falling back to single-call populate`
+        );
+      }
     } else {
-      warnings.push(
-        `Populate ops couldn't apply cleanly (${applied.reason}); seed left empty.`
-      );
-      console.error(
-        `[synthesize] populate applyOps failed at index ${applied.failedAtIndex}: ${applied.reason}`
+      populateError = parallel.error;
+      console.warn(
+        `[synthesize] parallel populate failed (${parallel.error}) — falling back to single-call populate`
       );
     }
-  } else {
-    warnings.push(`Populate step failed: ${populateResult.error}. Seed left empty.`);
-    console.error(`[synthesize] populate step failed: ${populateResult.error}`);
+  }
+
+  // Legacy single-call populate. Runs when parallel is disabled OR when
+  // parallel failed (fallback). The retry-with-corrective-signal block
+  // below catches both first-attempt-empty and parallel-fallback-empty.
+  if (!populateOk) {
+    const populateResult = await executeArrange({
+      map: config.seed,
+      config,
+      instruction: populateInstruction,
+      sources: sources.length > 0 ? sources : undefined,
+    });
+
+    if (populateResult.ok) {
+      const applied = applyOps(config.seed, populateResult.ops);
+      if (applied.ok) {
+        populatedMap = applied.map;
+        populationSummary = populateResult.summary;
+        opsCount = populateResult.ops.length;
+        populateOk = true;
+        const connectorOps = populateResult.ops.filter(
+          (o) => (o as { op?: string }).op === "addConnector"
+        ).length;
+        console.log(
+          `[synthesize] populate ok — ${populateResult.ops.length} ops (${connectorOps} addConnector)`
+        );
+      } else {
+        warnings.push(
+          `Populate ops couldn't apply cleanly (${applied.reason}); seed left empty.`
+        );
+        console.error(
+          `[synthesize] populate applyOps failed at index ${applied.failedAtIndex}: ${applied.reason}`
+        );
+      }
+    } else {
+      warnings.push(`Populate step failed: ${populateResult.error}. Seed left empty.`);
+      console.error(`[synthesize] populate step failed: ${populateResult.error}`);
+    }
+  } else if (populateError) {
+    // Parallel succeeded after all (above branch ran) — surface the earlier
+    // error as a warning so it shows up in debug output without blocking.
+    warnings.push(`Parallel populate had a recovered error: ${populateError}`);
+  }
+
+  // If populate produced too few cards relative to the contract's minimum
+  // density (or 3 when no contract), retry ONCE with a CORRECTIVE signal —
+  // not just "try harder". We compute the exact diff (which cells are
+  // empty, which are below density.min) and embed it in the retry prompt so
+  // the agent can target the gaps rather than re-hallucinate.
+  const topLevelCount = populatedMap.cards.filter((c) => !c.parentCardId).length;
+  const minRequired = contract
+    ? Math.max(3, contract.density.min * Math.max(1, contract.axes.cols.length * contract.axes.rows.length) / 3)
+    : 3;
+  if (topLevelCount < minRequired) {
+    const reason = populateOk
+      ? `the populate pass left only ${topLevelCount} cards`
+      : `populate did not produce a valid result${populateError ? ` (${populateError})` : ""}`;
+    console.warn(
+      `[synthesize] retrying populate — ${reason}; first pass left ${topLevelCount} top-level cards (min required ${Math.ceil(minRequired)})`
+    );
+    const correctiveSignal = contract
+      ? buildContractRetrySignal(populatedMap, contract, config)
+      : "";
+    const retry = await executeArrange({
+      map: config.seed,
+      config,
+      instruction: `${populateInstruction}
+
+**RETRY REQUIRED — corrective signal below**
+
+Your previous attempt produced too few cards. Do not re-hallucinate a new shape. Target the gaps named below.
+
+${correctiveSignal || `You MUST emit a comprehensive set of \`addCard\` ops this turn — at least one card per (col, row) position where content naturally belongs, more where the framework calls for density. Do not return an empty or near-empty ops array. If you were uncertain about phrasing, use plausible practitioner language; the user can refine later.`}`,
+      sources: sources.length > 0 ? sources : undefined,
+    });
+    if (retry.ok) {
+      const retried = applyOps(config.seed, retry.ops);
+      if (retried.ok && retried.map.cards.length > populatedMap.cards.length) {
+        populatedMap = retried.map;
+        populationSummary = retry.summary;
+        opsCount = retry.ops.length;
+        warnings.push("Populate retried once after an empty first pass.");
+        console.log(
+          `[synthesize] populate retry ok — ${retry.ops.length} ops, ${retried.map.cards.length} final cards`
+        );
+      } else {
+        console.error(
+          `[synthesize] populate retry still insufficient — ${retried.ok ? retried.map.cards.length + " cards" : "applyOps failed: " + retried.reason}`
+        );
+      }
+    } else {
+      console.error(`[synthesize] populate retry step failed: ${retry.error}`);
+    }
   }
 
   return {
@@ -170,16 +321,81 @@ Return a FrameworkConfig via the propose_framework tool.`;
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Contract-aware retry signal. When the first populate attempt came up short,
+// we compute a structured diff against the contract and hand the agent the
+// specific cells it missed — targeted, not scolding. Empty string when the
+// contract is absent (legacy retry path stays in place).
+// ──────────────────────────────────────────────────────────────────────────────
+
+function buildContractRetrySignal(
+  map: UniversalMap,
+  contract: ShapeContract,
+  config: FrameworkConfig
+): string {
+  const diff = diffContract(map, contract);
+  const lines: string[] = [];
+  if (diff.missingCells.length > 0) {
+    const labelled = diff.missingCells.map((cell) => {
+      const colLabel = config.seed.cols.find((c) => c.id === cell.colId)?.label ?? cell.colId;
+      const rowLabel = config.seed.rows.find((r) => r.id === cell.rowId)?.label ?? cell.rowId;
+      return `  - colId=${cell.colId} (${colLabel}) × rowId=${cell.rowId} (${rowLabel})`;
+    });
+    lines.push(`**Empty cells requiring at least ${contract.density.min} card(s) each (${diff.missingCells.length} total):**`);
+    lines.push(...labelled);
+  }
+  if (diff.underfilledCells.length > 0) {
+    lines.push(``);
+    lines.push(`**Underfilled cells (have fewer than ${contract.density.min}):**`);
+    for (const { cellRef, have, need } of diff.underfilledCells) {
+      const colLabel = config.seed.cols.find((c) => c.id === cellRef.colId)?.label ?? cellRef.colId;
+      const rowLabel = config.seed.rows.find((r) => r.id === cellRef.rowId)?.label ?? cellRef.rowId;
+      lines.push(`  - (${colLabel} × ${rowLabel}): have ${have}, need ≥ ${need}`);
+    }
+  }
+  if (lines.length === 0) return "";
+  lines.push(``);
+  lines.push(
+    `Emit one \`addCard\` op per missing cell (colId + rowId must match exactly). Use plausible domain language; the user can refine later. Do not invent labels outside the enumerated list when one is present in the Contract block.`
+  );
+  return lines.join("\n");
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Step 3: Populate instruction template — tuned per layout, and enriched with
 // source material when present so the agent pulls specific cards from it.
 // ──────────────────────────────────────────────────────────────────────────────
 
-function populateInstructionFor(config: FrameworkConfig, hasSources: boolean): string {
+function populateInstructionFor(
+  config: FrameworkConfig,
+  hasSources: boolean,
+  contract?: ShapeContract
+): string {
+  // The contract block — SAME text that was embedded into the synth
+  // description — must also be in the populate instruction so the universal
+  // prompt's "honor the # Contract block" rule has something to honor. Without
+  // this the populate agent sees the rule but can't find the block and ends
+  // up emitting zero ops.
+  const contractBlock = contract ? `${renderContractBlock(contract)}\n\n` : "";
+
   const base = hasSources
-    ? `Populate this framework with specific content drawn from the source material attached to this conversation. Cards should be concrete quotes, findings, or data points from the sources (8–16 words each). Do NOT invent content — stay grounded in what the sources say.
+    ? `${contractBlock}Populate this framework with specific content drawn from the source material attached to this conversation. Cards should be concrete quotes, findings, or data points from the sources (8–16 words each). Do NOT invent content — stay grounded in what the sources say.
 
 `
-    : `Populate this framework with realistic example content that a user would see as a useful starting point. Keep cards specific and concrete (8–16 words each). `;
+    : `${contractBlock}Populate this framework with realistic example content that a user would see as a useful starting point. Keep cards specific and concrete (8–16 words each). `;
+
+  // Reshape preservation rule — when the description carries a `# Existing
+  // board` block, every named entity / observation from there is enumerated
+  // content the populate agent MUST reuse. The rule complements the contract
+  // block; together they pin both the new shape and the existing content.
+  const preservation = `
+
+**If the description contains a \`# Existing board\` block, treat that block as your CONTENT SOURCE — the user is RESHAPING, not regenerating.** Hard rules:
+
+1. **Every original entity name must appear on the new shape.** If the original board listed Anthropic, OpenAI, Google DeepMind, Meta, Mistral, xAI as rows / entities, those exact names must be the entities on the new shape — placed as cards within the new (col, row) cells that best characterize them on the new axes.
+2. **Each original observation should land somewhere on the new shape.** Pull card text DIRECTLY from the existing-board cards (verbatim quotes preferred; light edits only when the new axes change the angle). If the new shape has fewer cells than original cards, stack multiple cards per cell — do not truncate the data.
+3. **DO NOT invent fresh entities to fit the new layout.** A reshape from "labs × dimensions" to "speed × reasoning" does NOT mean replacing labs with model names — it means positioning the same labs (and their original observations) on the new axes.
+4. **Honor the contract's \`enumerated.entities\`** when present — that list is the closed set of entity names. If you find yourself emitting an entity not in that list, you've gone off-script.
+5. **Density**: emit at least \`enumerated.entities.length\` cards if entities are listed, or one card per existing-board entry, whichever is smaller. Match \`density.target\` per cell; if there's not enough cells for everything, prefer stacking over dropping cards.`;
 
   // Top-priority visual directive — the renderingPlan summary is the BRIDGE
   // between the agent's semantic reasoning (structuringPrompt) and per-card
@@ -207,38 +423,25 @@ Set \`meta.stepKind\` on cards via the \`meta\` field on \`addCard\` (\`"start" 
     : "";
 
   if (config.layout === "matrix") {
-    return base + visualBrief + "Aim for 2–4 items in every cell — this is a dense grid where every (col, row) position should be filled." + connectorNudge;
+    return base + preservation + visualBrief + "Aim for 2–4 items in every cell — this is a dense grid where every (col, row) position should be filled." + connectorNudge;
   }
   if (config.layout === "kanban") {
-    return base + visualBrief + "Each column should hold 3–7 cards. If the framework naturally has sub-items (e.g. checklist items under a goal, quotes under a theme), use sub-items via addCard with parentCardId for the nested detail." + connectorNudge;
+    return base + preservation + visualBrief + "Each column should hold 3–7 cards. If the framework naturally has sub-items (e.g. checklist items under a goal, quotes under a theme), use sub-items via addCard with parentCardId for the nested detail." + connectorNudge;
   }
   if (config.layout === "freeform") {
     return (
       base +
+      preservation +
       visualBrief +
       `
-**This is a freeform spatial framework.** Freeform WITHOUT region chrome becomes a card soup. You MUST decide what shape cards to emit before placing content:
+**Legacy freeform path.** Emit regular grid-style cards — 4–6 per (colId, rowId) cell. DO NOT set \`meta.x\`, \`meta.y\`, \`meta.shapeKind\`, \`meta.shapeWidth\`, or \`meta.shapeHeight\` on any card. Absolute positioning is no longer part of the AI path; the grid renderer owns geometry.
 
-**Case A — named thematic regions** (post-mortems, strategy boards, opportunity landscapes, exec planning boards, anything with N named clusters of ideas that don't map to clean x/y axes):
-- Emit ONE \`rectangle\` shape card per region. The card's text is the region label (e.g., "Root Causes", "Warning Signs", "Founder Decisions").
-- Lay the rectangles out on a 1600×1000 canvas in a clean grid. Common layouts: 2×3 (3 rectangles wide × 2 tall, each ~500×450 with 40px gaps), 3×2, 4×1 strip, or center+petals for hub-and-spoke topics.
-- Each rectangle should be ~500×450px typical, 600×500 if dense. Leave 40–60px between rectangles so labels and cards inside don't collide.
-- Then emit 4–8 content cards inside each region, setting \`meta.x\`/\`meta.y\` so they sit INSIDE the rectangle's bounding box with ~30px interior padding. Stack content cards vertically inside the region, 2 columns × 3–4 rows per region when there are many.
-- **Check the description for a \`# Shape plan (authoritative)\` block.** If it lists \`regions:\`, emit EXACTLY those regions as rectangle shape cards in the order given. If \`regionLayout\` is specified (e.g., "3x2 grid"), follow it literally.
-
-**Case B — named geometric diagram** (Double Diamond → two diamonds; Venn/Ikigai → overlapping circles; Kano Model → horizontal bands):
-- Emit the diagram-appropriate shape cards (\`diamond\`, \`circle\`, \`ellipse\`, or \`rectangle\`) with meaningful overlap/positioning.
-- Place content cards inside or on the boundaries of their shape.
-
-**Case C — loose mind-map / brainstorm without implied geometry**:
-- Skip shape cards entirely. Place 8–15 content cards with x/y clustered by col.
-
-In all cases: emit shape cards FIRST (lower z-order = background), content cards second. Pick a col id for each content card based on which shape / region it belongs to (this is how AI later rearrangements track regional intent).
+If the Contract block (\`# Contract (authoritative — honor exactly)\`) lists \`cellGroups:\`, place cards into the cells that belong to each group so the cluster chrome groups them visually.
       `.trim()
     );
   }
   // Default: grid layout.
-  return base + visualBrief + "Target ~50–70% fill across (col, row) positions; leave cells empty where there is no genuine insight. Use sub-items when a card has naturally nested detail." + connectorNudge;
+  return base + preservation + visualBrief + "Target ~50–70% fill across (col, row) positions; leave cells empty where there is no genuine insight. Use sub-items when a card has naturally nested detail." + connectorNudge;
 }
 
 // Orientation-specific positioning rules. The visual brief in renderingPlan.summary

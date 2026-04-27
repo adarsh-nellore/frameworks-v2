@@ -22,6 +22,10 @@ import {
 } from "@/lib/agents/prompt-interpreter";
 import { runShapePlanner, renderShapePlanBlock } from "@/lib/agents/shape-planner";
 import { buildSourceDigest } from "@/lib/agents/source-digest";
+import {
+  validateContract,
+  type ShapeContract,
+} from "@/lib/frameworks/shape-contract";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -38,6 +42,9 @@ type ParsedRequest = {
   preamble: string | null;
   fidelityMode: boolean;
   inputs: RawInput[];
+  /** Pre-computed shape contract from /api/preview/clarify. When present,
+   *  the route skips the shape-planner step entirely. */
+  prefetchedContract?: ShapeContract;
 };
 
 async function parseRequest(req: Request): Promise<ParsedRequest> {
@@ -80,11 +87,15 @@ async function parseRequest(req: Request): Promise<ParsedRequest> {
     if (title?.trim()) hints.push(`Title hint: ${title.trim()}`);
     if (persona?.trim()) hints.push(`Persona hint: ${persona.trim()}`);
 
+    const contractRaw = (fd.get("contract") as string | null) ?? null;
+    const prefetchedContract = parsePrefetchedContract(contractRaw);
+
     return {
       frameworkId,
       preamble: hints.length ? hints.join("\n") : null,
       fidelityMode,
       inputs,
+      prefetchedContract,
     };
   }
 
@@ -95,6 +106,7 @@ async function parseRequest(req: Request): Promise<ParsedRequest> {
     persona?: string;
     urls?: string[];
     fidelityMode?: boolean;
+    contract?: unknown;
   };
   const inputs: RawInput[] = [];
   if (body.text && body.text.trim()) {
@@ -114,7 +126,32 @@ async function parseRequest(req: Request): Promise<ParsedRequest> {
     preamble: hints.length ? hints.join("\n") : null,
     fidelityMode: body.fidelityMode !== false,
     inputs,
+    prefetchedContract: body.contract
+      ? parsePrefetchedContract(body.contract)
+      : undefined,
   };
+}
+
+/** Validate an incoming contract payload (string-encoded JSON from FormData
+ *  or already-parsed object from JSON body) and return a typed ShapeContract
+ *  if it conforms. Bad payloads are silently dropped — the route falls back
+ *  to running its own shape-planner call. */
+function parsePrefetchedContract(raw: unknown): ShapeContract | undefined {
+  if (!raw) return undefined;
+  let candidate: unknown = raw;
+  if (typeof raw === "string") {
+    try {
+      candidate = JSON.parse(raw);
+    } catch {
+      return undefined;
+    }
+  }
+  const v = validateContract(candidate);
+  if (!v.ok) {
+    console.warn(`[generate] prefetched contract invalid (${v.reason}) — replanning`);
+    return undefined;
+  }
+  return v.contract;
 }
 
 export async function POST(req: Request) {
@@ -182,28 +219,62 @@ export async function POST(req: Request) {
           emit({ phase: "synthesizing" });
           const baseDescription = await buildDescriptionForSynthesis(parsed, sources);
 
-          // Shape planner: forces per-subject shape variation. Runs before
-          // synth so the synth agent gets an authoritative `# Shape plan`
-          // block to honor. Fails soft — if the planner returns null, we
-          // skip this augmentation entirely. See lib/agents/shape-planner.ts.
+          // Shape planner: the SINGLE upstream decision point for board
+          // shape. Emits a typed ShapeContract that every downstream stage
+          // honors. The rendered contract block is injected into the
+          // description so the synth + populate agents see it as an
+          // authoritative header; the typed object is also threaded through
+          // so the populate retry can compute a contract-aware diff signal.
+          // Fails soft — if the planner returns null, we skip augmentation.
+          //
+          // De-dupe: when the client already ran the planner via
+          // /api/preview/clarify and threaded the contract through, reuse it
+          // here instead of recomputing. Saves ~20–25s of round-trip time.
           let description = baseDescription;
-          try {
-            const digest = buildSourceDigest(sources);
-            const plan = await runShapePlanner({
-              description: baseDescription,
-              sourcesSummary: digest.text,
-            });
-            if (plan) {
-              description = `${baseDescription}\n\n${renderShapePlanBlock(plan)}`;
+          let contract: ShapeContract | undefined = parsed.prefetchedContract;
+          if (contract) {
+            description = `${baseDescription}\n\n${renderShapePlanBlock(contract)}`;
+            console.log(
+              `[generate] reusing prefetched contract from clarify (variant=${contract.variant}, ${contract.axes.cols.length}c×${contract.axes.rows.length}r)`
+            );
+          } else {
+            try {
+              const digest = buildSourceDigest(sources);
+              contract = (await runShapePlanner({
+                description: baseDescription,
+                sourcesSummary: digest.text,
+              })) ?? undefined;
+              if (contract) {
+                description = `${baseDescription}\n\n${renderShapePlanBlock(contract)}`;
+              }
+            } catch (e) {
+              console.warn("[generate] shape-planner step errored — continuing without plan:", e);
             }
-          } catch (e) {
-            console.warn("[generate] shape-planner step errored — continuing without plan:", e);
           }
 
+          // Per-scope progress hooks so the UI can show "filling X of Y" as
+          // parallel workers complete. Only fires when synthesizeFramework
+          // takes the parallel-populate branch.
+          let scopeTotal = 0;
+          let scopeDone = 0;
           const synth = await synthesizeFramework({
             description,
             sources,
             existingIds: [],
+            contract,
+            onScopeStart: (_scope, total) => {
+              scopeTotal = total;
+              emit({ phase: "populating", done: scopeDone, total: scopeTotal });
+            },
+            onScopeDone: (scope, _opsCount) => {
+              scopeDone++;
+              emit({
+                phase: "populating",
+                done: scopeDone,
+                total: scopeTotal,
+                lastLabel: scope.label,
+              });
+            },
           });
           emit({
             phase: "result",
@@ -454,10 +525,6 @@ function detectShapeHint(description: string): string | null {
         /\bnow.{0,3}next.{0,3}later\b/,
       ],
     },
-    {
-      layout: "freeform",
-      patterns: [/\bmind\s*map\b/, /\bconcept\s*map\b/, /\bfreeform\s*canvas\b/, /\bmiro\b/],
-    },
   ];
   for (const m of matchers) {
     for (const p of m.patterns) {
@@ -466,6 +533,18 @@ function detectShapeHint(description: string): string | null {
         return `User explicitly requested a ${hit[0].trim()} — strongly prefer layout: "${m.layout}". If the shape genuinely contradicts the subject matter, override, but default to honoring the requested shape.`;
       }
     }
+  }
+  // Clustered-grid hints: mind map / concept map / clustered canvas. Planner
+  // picks variant: "clustered" (renders as a grid with cell-group chrome).
+  if (
+    /\bmind\s*map\b/.test(text) ||
+    /\bconcept\s*map\b/.test(text) ||
+    /\bclustered\s+(canvas|graph|board)\b/.test(text) ||
+    /\bopportunity\s+(canvas|map)\b/.test(text) ||
+    /\bstrategy\s+canvas\b/.test(text) ||
+    /\bstakeholder\s+landscape\b/.test(text)
+  ) {
+    return `User asked for a clustered / mind-map-style board — strongly prefer variant: "clustered" on the shape contract. Render as a grid with named cell groups; do NOT use layout: "freeform".`;
   }
   return null;
 }

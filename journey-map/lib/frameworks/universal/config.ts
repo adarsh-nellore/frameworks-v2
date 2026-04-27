@@ -127,6 +127,26 @@ export type FrameworkConfig = {
   // ── Top-level meta fields (rendered as hero banner above the grid) ──────────
   heroMetaFields?: HeroMetaField[];
 
+  // ── Cell groups (clustered variant only) ────────────────────────────────
+  /**
+   * Named cell groupings for the clustered variant of the ShapeContract. Each
+   * group labels a set of (colId, rowId) pairs and the renderer draws a
+   * labeled rounded rectangle behind those cells (CellGroupChrome). This is
+   * how mind maps, post-mortem canvases, strategy boards — everything we
+   * used to call "freeform with regions" — present as a single grid with
+   * visual grouping chrome instead of absolute-positioned cards.
+   *
+   * Server-stamped from the ShapeContract; the synth agent does not emit it.
+   */
+  cellGroups?: Array<{
+    id: string;
+    label: string;
+    cells: Array<{ colId: string; rowId: string }>;
+    chromeStyle?: "box" | "region" | "radial-petal" | "none";
+  }>;
+  /** Optional layout hint for group positioning ("3x2 grid", "radial", etc.). */
+  cellGroupLayoutHint?: string;
+
   // ── Seed ───────────────────────────────────────────────────────────────────
   seed: UniversalMap;
 
